@@ -28,12 +28,6 @@ Discovers locally installed Steam apps from `appmanifest_<AppID>.acf` files, che
 
 6. Inspect `logs/` and `config.json` to see the licence checks, skipped games, and results.
 
-The equivalent manual command is:
-
-   ```powershell
-   py -3 -m steam_manifest_updater run
-   ```
-
 ### SteamCMD distribution and installation
 
 **SteamCMD is not redistributed in this project, source archives, or releases.** `SETUP.bat` runs `scripts/setup.ps1`, which invokes `scripts/install-steamcmd.ps1` to download Valve's official [Windows SteamCMD ZIP](https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip) over HTTPS, extract its bootstrap executable into the Git-ignored `tools/steamcmd/` folder, and clean up the temporary download. SteamCMD retrieves its own updates from Valve when launched. Set `-SkipSteamCMD` only if you already provide SteamCMD via a separately managed installation, and adjust `steamcmd_path` in `config.json` accordingly.
