@@ -11,7 +11,7 @@ Discovers locally installed Steam apps from `appmanifest_<AppID>.acf` files, che
 
 1. Install [Python 3.10+](https://www.python.org/downloads/windows/) if necessary.
 2. Download this repository as a ZIP, extract it to a permanent folder, and double-click **`SETUP.bat`**.
-3. Setup creates `config.json` (without overwriting an existing one), downloads SteamCMD from Valve if it is not installed, scans Steam libraries, and registers the daily **03:00** current-user scheduled task.
+3. Setup creates `config.json` (without overwriting an existing one), downloads SteamCMD **directly from Valve** if it is not installed, scans Steam libraries, and registers the daily **03:00** current-user scheduled task.
 4. Open a terminal in the extracted folder and run the dry run **before allowing the daily task to update anything**:
 
    ```powershell
@@ -20,11 +20,25 @@ Discovers locally installed Steam apps from `appmanifest_<AppID>.acf` files, che
    py -3 -m steam_manifest_updater run --dry-run
    ```
 
-5. Inspect `logs/` and `config.json`. To run once manually, close Steam and running games, then:
+5. To test an actual update, double-click **`TEST-UPDATE.bat`**. It requires you to type `UPDATE` before launching SteamCMD; unlike `TEST-DRY-RUN.bat`, it can change installed game files. Close Steam and running games first. Alternatively, run once manually:
 
    ```powershell
    py -3 -m steam_manifest_updater run
    ```
+
+6. Inspect `logs/` and `config.json` to see the licence checks, skipped games, and results.
+
+The equivalent manual command is:
+
+   ```powershell
+   py -3 -m steam_manifest_updater run
+   ```
+
+### SteamCMD distribution and installation
+
+**SteamCMD is not redistributed in this project, source archives, or releases.** `SETUP.bat` runs `scripts/setup.ps1`, which invokes `scripts/install-steamcmd.ps1` to download Valve's official [Windows SteamCMD ZIP](https://steamcdn-a.akamaihd.net/client/installer/steamcmd.zip) over HTTPS, extract its bootstrap executable into the Git-ignored `tools/steamcmd/` folder, and clean up the temporary download. SteamCMD retrieves its own updates from Valve when launched. Set `-SkipSteamCMD` only if you already provide SteamCMD via a separately managed installation, and adjust `steamcmd_path` in `config.json` accordingly.
+
+**Release maintainers:** do not bundle `tools/`, `steamcmd.exe`, SteamCMD archives, Steam content, or user configuration in published assets. The MIT licence applies to the project's own source code, not Valve's binaries.
 
 The task **only runs while the Windows account is logged in**. If you need a different schedule, see [Scheduling](#scheduling). The updater never stores Steam usernames or passwords; SteamCMD always logs in anonymously.
 
