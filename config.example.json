@@ -3,14 +3,12 @@
   "steamcmd_path": "tools/steamcmd/steamcmd.exe",
   "log_dir": "logs",
   "timeout_minutes": 180,
-  "jobs": [
-    {
-      "enabled": false,
-      "detect_appid": "730",
-      "steamcmd_appid": "740",
-      "install_dir": "C:\\GameServers\\csgo-legacy",
-      "login": "anonymous",
-      "validate": false
-    }
-  ]
+  "licence_timeout_seconds": 90,
+  "auto_update": {
+    "enabled": true,
+    "validate": false,
+    "skip_if_steam_running": true,
+    "exclude_appids": []
+  },
+  "jobs": []
 }

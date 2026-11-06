@@ -1,65 +1,49 @@
 # Steam Manifest Auto-Updater
 
-**Windows-first | Python 3.10+ | MIT-licensed | v0.1.0 (first draft)**
+**Windows-first | Python 3.10+ | MIT licence | v0.2.0 (preview)**
 
-Discover what Steam has installed on a PC using its own `appmanifest_<appid>.acf` files, then run **explicitly configured SteamCMD maintenance jobs** on a daily schedule. Designed for lab PCs, gaming setups, and managed game/server installations.
+Discovers locally installed Steam apps from `appmanifest_<AppID>.acf` files, checks **SteamCMD anonymous licences before attempting downloads**, and runs eligible updates on a daily schedule. Also supports **explicit config-only maintenance jobs** for dedicated servers and other special cases.
 
-> [!IMPORTANT]
-> **This is not a universal Steam client game updater.** SteamCMD cannot reliably update arbitrary consumer Steam titles directly inside a Steam client library. For ordinary PC games, use **Steam > Settings > Downloads** and configure automatic updates in Steam. This project's SteamCMD jobs are **opt-in only** and **must use separate install directories**. The example is disabled until you configure it.
+> [!WARNING]
+> **SteamCMD is not a universal replacement for the Steam desktop client.** An installed manifest does not mean an anonymous account has an entitlement. `licenses_for_app` is a *read-only preflight*, not a guarantee that every depot can be downloaded. A valid licence can still fail at update time. Some Steam-client games are unsupported by SteamCMD. **In-place SteamCMD updates can leave the desktop Steam client's manifest/build tracking out of sync**, even when downloads succeed. Test on a non-critical PC before using in a lab; the Steam client remains the recommended way to maintain ordinary client games.
 
-## What it does
+## Quick start (Windows 10/11)
 
-- Finds Steam via the Windows registry, usual Steam folders, `STEAM_PATH`, or configurable `steam_roots`.
-- Reads `libraryfolders.vdf` and `appmanifest_*.acf` to discover installs across multiple drives.
-- Shows AppID, game name, installation location, and missing-folder warnings.
-- Runs only the SteamCMD jobs you explicitly allow and only when the detection AppID is installed.
-- Never writes to a Steam client library or attempts direct manifest editing.
-- Supports non-destructive `--dry-run`, daily Task Scheduler setup, logs, JSON reports, and a no-overlap lock.
-- Needs no third-party Python packages. SteamCMD is downloaded separately from Valve if requested.
-
-## Start here (Windows)
-
-**Requirements:** Windows 10/11, Python 3.10+ from [python.org](https://www.python.org/downloads/windows/), and a Steam installation to scan. SteamCMD is needed only if you enable a SteamCMD job.
-
-1. Download or clone this repository and unzip it somewhere permanent, e.g. `C:\Tools\steam-manifest-updater`. For the simplest setup, **double-click `SETUP.bat`** and follow its messages; steps 2–3 below are the equivalent terminal method.
-2. In that folder, right-click an empty area, open **Terminal** or **PowerShell**.
-3. Run:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Time 03:00
-   ```
-
-   This creates your local `config.json`, detects games, and registers a daily **03:00** scheduled task for your Windows account. The task runs only **while you are logged in**. It does not elevate privileges or store a password.
-
-4. Inspect discovered games:
+1. Install [Python 3.10+](https://www.python.org/downloads/windows/) if necessary.
+2. Download this repository as a ZIP, extract it to a permanent folder, and double-click **`SETUP.bat`**.
+3. Setup creates `config.json` (without overwriting an existing one), downloads SteamCMD from Valve if it is not installed, scans Steam libraries, and registers the daily **03:00** current-user scheduled task.
+4. Open a terminal in the extracted folder and run the dry run **before allowing the daily task to update anything**:
 
    ```powershell
    py -3 -m steam_manifest_updater discover
-   ```
-
-5. **If you have an actual SteamCMD-compatible application to update**, edit `config.json` and enable a matching job (see below). Download Valve's SteamCMD using:
-
-   ```powershell
-   powershell -ExecutionPolicy Bypass -File .\scripts\install-steamcmd.ps1
-   ```
-
-6. Test your plan before any update:
-
-   ```powershell
+   py -3 -m steam_manifest_updater doctor
    py -3 -m steam_manifest_updater run --dry-run
    ```
 
-7. Run once manually:
+5. Inspect `logs/` and `config.json`. To run once manually, close Steam and running games, then:
 
    ```powershell
    py -3 -m steam_manifest_updater run
    ```
 
-**Nothing is downloaded or updated by default.** The task can run, scan and log daily, but the sample update job is disabled until you deliberately enable it.
+The task **only runs while the Windows account is logged in**. If you need a different schedule, see [Scheduling](#scheduling). The updater never stores Steam usernames or passwords; SteamCMD always logs in anonymously.
 
-### An example configuration
+## How the two modes work
 
-The shipped `config.example.json` includes an *illustrative, disabled* mapping: detect the Counter-Strike client AppID `730` and use SteamCMD AppID `740` for an **isolated dedicated-server directory**. These AppIDs identify different applications. This is not a method of updating the client game itself.
+| Mode | How AppIDs are selected | Update destination | Licence check |
+| --- | --- | --- | --- |
+| **Automatic** (new installs: enabled) | Reads *all* valid, installed manifests, except excluded/overridden AppIDs | Detected local Steam game folder | Mandatory anonymous `licenses_for_app` preflight |
+| **Manual** (optional) | Explicit `jobs` entries in `config.json`, optionally without a local manifest | Separate absolute path *outside* all Steam client libraries | Same mandatory preflight |
+
+**Automatic mode is on in the newly generated config.** It scans installed games and **attempts updates only after a positive anonymous-licence response**. Missing or unclear licence results are logged as `denied` or `unknown` and cause a skip. The updater does **not** equate a public Steam store page or `app_info_print` with download rights, and it does not try `app_update` to discover whether an unlicensed game is accessible.
+
+**Manual jobs override automatic selection** for their `detect_appid`. A disabled manual entry also suppresses automatic updates of that AppID. This makes it possible to maintain a few specific apps or dedicated server installations without duplicate downloads.
+
+If a previously created `config.json` does **not** contain an `auto_update` section, automatic updates remain **off** for backward compatibility. Add `"auto_update": { "enabled": true }` to opt in; `init` never overwrites your existing configuration.
+
+### Example configuration
+
+The supplied [`config.example.json`](config.example.json) has no required per-game list:
 
 ```json
 {
@@ -67,68 +51,100 @@ The shipped `config.example.json` includes an *illustrative, disabled* mapping: 
   "steamcmd_path": "tools/steamcmd/steamcmd.exe",
   "log_dir": "logs",
   "timeout_minutes": 180,
-  "jobs": [
-    {
-      "enabled": false,
-      "detect_appid": "730",
-      "steamcmd_appid": "740",
-      "install_dir": "C:\\GameServers\\csgo-legacy",
-      "login": "anonymous",
-      "validate": false
-    }
-  ]
+  "licence_timeout_seconds": 90,
+  "auto_update": {
+    "enabled": true,
+    "validate": false,
+    "skip_if_steam_running": true,
+    "exclude_appids": []
+  },
+  "jobs": []
 }
 ```
 
-Change `enabled` to `true` only after verifying that the requested SteamCMD AppID is available and that the isolated target folder is correct. The program does **not** automatically turn normal games into dedicated servers.
+#### Update selected apps only
 
-For additional drives, use `steam_roots` only when autodetection is incomplete, e.g. `["D:\\SteamLibrary"]` if that directory contains `steamapps/`; normally the Steam `libraryfolders.vdf` index handles additional drives automatically.
+Set `"auto_update": {"enabled": false}` and add explicit jobs:
 
-## Daily scheduling
+```json
+"jobs": [
+  {
+    "enabled": true,
+    "detect_appid": "730",
+    "steamcmd_appid": "740",
+    "name": "Counter-Strike dedicated server example",
+    "install_dir": "C:\\GameServers\\csgo-legacy",
+    "require_manifest": true,
+    "validate": false
+  }
+]
+```
 
-The setup script registers a Windows Scheduled Task called **Steam Manifest Auto-Updater** (default 03:00 local time). It runs `python -m steam_manifest_updater run` as the current user.
+This example **does not update Counter-Strike itself**: it updates a *different* SteamCMD AppID to an isolated server directory, provided that anonymous SteamCMD currently grants access. It is an illustration, not a verified recommendation for a current server build. To update a particular server even if the associated client manifest does not exist, set `"require_manifest": false`.
+
+You can also keep `auto_update.enabled: true` while listing manual overrides. For example, `{"enabled": false, "detect_appid": "730"}` excludes 730 from auto mode, and `auto_update.exclude_appids` provides another exclusion mechanism.
+
+See [Configuration](docs/CONFIGURATION.md) for precedence and examples.
+
+## Anonymous licence checks and logs
+
+For each eligible AppID, SteamCMD runs a **read-only** command:
+
+```text
+steamcmd.exe +login anonymous +licenses_for_app <AppID> +quit
+```
+
+Only a recognised **active licence package** for the target AppID allows a subsequent `app_update`. The result is written to the console, a timestamped `.log`, and a structured `.json` report inside `logs/`.
+
+| Licence result | Action |
+| --- | --- |
+| `granted` | Update may be attempted, subject to safety checks |
+| `denied` | Skip; no matching active licence reported |
+| `unknown` | Skip; response unrecognised, login/probe failed, timed out, or SteamCMD missing |
+
+The JSON report contains `inventory`, `planned`, `licence_checks`, and `results`. **A granted licence does not guarantee depot access**; an update can still fail later and will be recorded as `failed`. Licence probes are performed once per unique AppID per run, even when multiple jobs use it. `--dry-run` still performs these read-only checks, but never runs `app_update`.
+
+> [!IMPORTANT]
+> **Steam must be closed for automatic in-place jobs.** The updater checks whether `steam.exe` is running on Windows and skips those jobs if it is running *or the check cannot be completed*. Close running games too. Manual jobs are restricted to separate folders outside Steam client libraries.
+
+## Scheduling
+
+Default: **03:00 local time, each day, while the Windows account is signed in**.
 
 ```powershell
-# Choose a different time:
+# Install/update the schedule and SteamCMD (default):
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Time 03:00
+
+# Different time:
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -Time 02:30
 
-# Configure only, with no scheduled task:
+# Prepare config, but do not create a scheduled task:
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -NoSchedule
 
-# Configure and download Valve's SteamCMD too:
-powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -InstallSteamCMD
+# Keep an existing manual SteamCMD installation / skip Valve download:
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -SkipSteamCMD
 
-# Remove the daily task (without deleting your config/logs):
+# Uninstall the scheduled task (leaves config and logs alone):
 powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-task.ps1
 ```
 
-The account **must remain signed in** for this interactive-user schedule. If the PC is asleep, execution depends on Windows power and Task Scheduler settings. This initial release does not install a background service, create service accounts or store Steam credentials. If you need updates while users are logged out, use a managed Windows task/service account with IT approval, or run SteamCMD jobs on a designated server. For client games, configure Steam's own auto-update window instead.
+To inspect scheduled tasks use **Windows Task Scheduler > Task Scheduler Library > Steam Manifest Auto-Updater**. Scheduled runs require the machine to be awake or Task Scheduler power settings to allow a start. The current-user guided setup does not install a service or store credentials.
 
-## Logs & troubleshooting
+## Limitations
 
-Each `run` creates timestamped files in `logs/`: a human-readable `.log` and a structured `.json`. `config.json`, `logs/`, and the downloaded SteamCMD folder are Git-ignored. No passwords are stored or passed to SteamCMD.
+- Installed manifest ≠ anonymous entitlement ≠ SteamCMD-compatible download. None of these imply one another.
+- SteamCMD licence output is not a documented, stable machine-readable API. If Valve changes it, this tool **fails closed** and logs `unknown` rather than guessing.
+- Automatic mode updates in-place using SteamCMD, which may interfere with the Steam client's own update bookkeeping. Use Steam's built-in updater for ordinary consumer games when possible.
+- This does not query a Steam account's personal purchases or attempt to work around paid-game licensing.
+- No live SteamCMD/Windows integration run has been completed yet. Unit tests mock SteamCMD output; start with a dry run.
+- GitHub Actions runs the Python test suite, **not** real Steam content downloads.
 
-```powershell
-py -3 -m steam_manifest_updater doctor
-py -3 -m unittest discover -s tests -v
-```
+## Contributing and support
 
-See [Configuration](docs/CONFIGURATION.md) and [Troubleshooting](docs/TROUBLESHOOTING.md).
+- [Configuration reference](docs/CONFIGURATION.md)
+- [Troubleshooting](docs/TROUBLESHOOTING.md)
+- [Contributing](CONTRIBUTING.md) and [Security](SECURITY.md)
 
-## Limitations / roadmap
+Licence: [MIT](LICENSE). Community bug reports welcome; please remove local paths and any personal details from logs.
 
-- Does not forcibly update consumer games in the Steam client.
-- Does not check Valve's servers to determine whether a client game has an update pending; a local manifest is not proof of an update.
-- SteamCMD is limited by the app's delivery model and access rights. Only anonymous login is supported in v0.1.
-- No production Windows runtime test has been performed yet; automated parser and runner tests use a mocked SteamCMD process.
-- Future candidates: optional read-only reporting dashboard, notifications, signed Windows release package, supported Windows Server deployment mode, and advanced dedicated-server mappings.
-
-## Contributing / licence
-
-Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md) , [SECURITY.md](SECURITY.md), and [Publishing](docs/PUBLISHING.md). Licensed under [MIT](LICENSE).
-
-### References
-
-- [Valve SteamCMD documentation](https://developer.valvesoftware.com/wiki/SteamCMD)
-- [Steam Support: Managing Steam Downloads & Updates](https://help.steampowered.com/en/faqs/view/71AB-698D-57EB-178C)
-- [Steam Support: Installed games appearing as uninstalled](https://help.steampowered.com/en/faqs/view/4578-18A7-C819-8620)
+**References:** [Valve SteamCMD](https://developer.valvesoftware.com/wiki/SteamCMD), [Valve Steamworks licensing diagnostics](https://partner.steamgames.com/doc/store/testing), [Steam Support: Downloads and updates](https://help.steampowered.com/en/faqs/view/71AB-698D-57EB-178C).

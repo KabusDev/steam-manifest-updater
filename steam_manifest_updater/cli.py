@@ -1,4 +1,4 @@
-"""User-facing command line and report output."""
+"""User-facing command line, inventory reports and licence-aware update logs."""
 from __future__ import annotations
 
 import argparse
@@ -22,21 +22,23 @@ def setup_logging(logdir: Path, stamp: str):
     logger.setLevel(logging.INFO)
     logger.handlers.clear()
     fmt = logging.Formatter('%(asctime)s %(levelname)s %(message)s')
-    for handler in (logging.StreamHandler(sys.stdout), logging.FileHandler(logdir / f'{stamp}.log', encoding='utf-8')):
+    for handler in (logging.StreamHandler(sys.stdout),
+                    logging.FileHandler(logdir / f'{stamp}.log', encoding='utf-8')):
         handler.setFormatter(fmt)
         logger.addHandler(handler)
     return logger
 
 
 def main(argv=None):
-    p = argparse.ArgumentParser(prog='steam-manifest-updater', description='Discover Steam installs and safely manage opt-in SteamCMD updates')
+    p = argparse.ArgumentParser(prog='steam-manifest-updater',
+                                description='Scan Steam manifests, check anonymous licences, then run eligible SteamCMD updates')
     p.add_argument('--config', type=Path, default=REPO / 'config.json', help='Path to config.json')
     sub = p.add_subparsers(dest='command', required=True)
-    sub.add_parser('init', help='Create editable config.json, without overwriting it')
-    sub.add_parser('discover', help='List detected Steam library games (no updates)')
-    sub.add_parser('doctor', help='Check discovery and enabled update jobs')
-    cmd = sub.add_parser('run', help='Run only enabled and detected SteamCMD jobs')
-    cmd.add_argument('--dry-run', action='store_true', help='Show the plan without launching SteamCMD')
+    sub.add_parser('init', help='Create editable config.json without overwriting it')
+    sub.add_parser('discover', help='List detected Steam manifests (does not update)')
+    sub.add_parser('doctor', help='Check detection, SteamCMD and planned jobs')
+    cmd = sub.add_parser('run', help='Check anonymous licences then update eligible apps')
+    cmd.add_argument('--dry-run', action='store_true', help='Do read-only licence checks, no app downloads')
     args = p.parse_args(argv)
 
     try:
@@ -47,7 +49,7 @@ def main(argv=None):
             else:
                 args.config.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(template, args.config)
-                print(f'Created: {args.config}. Edit this file to enable your own jobs.')
+                print(f'Created: {args.config}. Automatic mode enabled; configure exclusions or overrides as needed.')
             return 0
 
         config = load_config(args.config)
@@ -66,43 +68,53 @@ def main(argv=None):
             for warning in warnings:
                 print(f'WARNING: {warning}', file=sys.stderr)
             if not libraries:
-                print('No libraries detected. Set steam_roots in config.json to your Steam installation directory.')
+                print('No libraries detected. Add Steam library roots to config.json if necessary.')
             return 0
 
-        jobs, steamcmd = plan_jobs(config, apps, libraries, REPO)
+        jobs, steamcmd, inventory = plan_jobs(config, apps, libraries, REPO)
         if args.command == 'doctor':
-            print(f'Steam libraries: {len(libraries)} | Manifest entries: {len(apps)} | Enabled and detected jobs: {len(jobs)}')
-            print(f'SteamCMD: {steamcmd} ({"found" if steamcmd.is_file() else "not installed"})')
+            mode = 'enabled' if config.get('auto_update', {}).get('enabled', False) else 'disabled'
+            print(f'Steam libraries: {len(libraries)} | Manifests: {len(apps)} | Jobs planned: {len(jobs)}')
+            print(f'Automatic mode: {mode} | SteamCMD: {steamcmd} ({"found" if steamcmd.is_file() else "missing"})')
+            print('Anonymous licence checks run at update time, NOT during doctor.')
             if not libraries:
-                print('ACTION: Add your Steam folder to steam_roots in config.json.')
-            if not config.get('jobs'):
-                print('ACTION: No jobs configured. Add an explicit allowlist job to config.json.')
+                print('ACTION: Set steam_roots in config.json or install Steam.')
             if jobs and not steamcmd.is_file():
-                print('ACTION: Run scripts/install-steamcmd.ps1.')
+                print('ACTION: Run scripts/install-steamcmd.ps1 to enable licence preflights and updates.')
             for warning in warnings:
                 print(f'WARNING: {warning}')
-            return 0 if libraries and (not jobs or steamcmd.is_file()) else 1
+            return 0 if (libraries or any(not job.get('require_manifest', True) for job in config.get('jobs', []))) and (not jobs or steamcmd.is_file()) else 1
 
         stamp = datetime.now().strftime('%Y%m%d-%H%M%S-%f')
         logdir = project_path(REPO, config.get('log_dir', 'logs'))
         logger = setup_logging(logdir, stamp)
         with run_lock(logdir / '.update.lock'):
-            logger.info('Scanned %d manifest(s) in %d libraries; %d eligible SteamCMD job(s)', len(apps), len(libraries), len(jobs))
+            logger.info('Found %d manifest(s) in %d libraries; %d candidate job(s)', len(apps), len(libraries), len(jobs))
             for warning in warnings:
                 logger.warning(warning)
-            for job in jobs:
-                logger.info('Planned AppID %s -> SteamCMD AppID %s -> %s', job['detect_appid'], job['steamcmd_appid'], job['install_dir'])
-            if args.dry_run:
-                logger.info('DRY RUN: No SteamCMD processes launched.')
-                results = []
-            else:
-                results = execute(jobs, steamcmd, config.get('timeout_minutes', 180), logger)
-            summary = {'timestamp': datetime.now().astimezone().isoformat(), 'dry_run': args.dry_run,
-                       'manifests': len(apps), 'libraries': [str(x) for x in libraries],
-                       'planned': jobs, 'results': results, 'warnings': warnings}
+            for entry in inventory:
+                logger.info('INVENTORY AppID %s: %s (%s)', entry['appid'], entry['status'], entry['reason'])
+            results, licence_checks = execute(jobs, steamcmd, config.get('timeout_minutes', 180), logger,
+                                               licence_timeout_seconds=config.get('licence_timeout_seconds', 90),
+                                               dry_run=args.dry_run)
+            summary = {
+                'timestamp': datetime.now().astimezone().isoformat(),
+                'dry_run': args.dry_run,
+                'manifests': len(apps),
+                'libraries': [str(x) for x in libraries],
+                'inventory': inventory,
+                'planned': jobs,
+                'licence_checks': licence_checks,
+                'results': results,
+                'warnings': warnings,
+            }
             report = write_summary(logdir, summary, stamp)
             logger.info('Report: %s', report)
-        return 1 if any(not result['success'] for result in results) else 0
+            logger.info('Summary: %d updated, %d skipped, %d failed',
+                        sum(x['status'] == 'updated' for x in results),
+                        sum(x['status'] == 'skipped' for x in results),
+                        sum(x['status'] == 'failed' for x in results))
+        return 1 if any(result['status'] == 'failed' for result in results) else 0
     except (ConfigError, OSError, ValueError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2

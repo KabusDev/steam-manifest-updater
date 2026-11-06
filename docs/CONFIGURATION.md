@@ -1,47 +1,80 @@
-# Configuration reference
+# Configuration
 
-The setup command copies `config.example.json` into `config.json` (never overwriting an existing file). **Edit `config.json`, not `config.example.json`.** The private local configuration is excluded from Git.
+`config.example.json` is copied to local `config.json` on `init` or setup. **Edit only `config.json`**; it is excluded from Git. Existing configurations are not overwritten.
 
-| Key | Purpose | Default |
+| Key | Default | Meaning |
 | --- | --- | --- |
-| `steam_roots` | Steam root directories containing `steamapps` if autodetection misses them | `[]` |
-| `steamcmd_path` | Location of `steamcmd.exe`, absolute or relative to repository root | `tools/steamcmd/steamcmd.exe` |
-| `log_dir` | Directory for run logs and JSON reports | `logs` |
-| `timeout_minutes` | Maximum *per-job* SteamCMD execution time (1 to 1440) | `180` |
-| `jobs` | Explicit allowlist of jobs to consider | Sample disabled job |
+| `steam_roots` | `[]` | Extra root folders containing `steamapps`; libraryfolders.vdf handles extra drives automatically |
+| `steamcmd_path` | `tools/steamcmd/steamcmd.exe` | SteamCMD executable |
+| `log_dir` | `logs` | Log files and JSON inventory/licence reports |
+| `timeout_minutes` | `180` | Limit for each SteamCMD *download* (1–1440) |
+| `licence_timeout_seconds` | `90` | Limit for each read-only entitlement query (10–600) |
+| `auto_update.enabled` | **`true` in new template** | Scan local manifests and plan their AppIDs automatically |
+| `auto_update.validate` | `false` | Run SteamCMD `validate` on auto jobs (more IO) |
+| `auto_update.skip_if_steam_running` | `true` | Refuse in-place SteamCMD updates while Steam is open, or its state cannot be checked |
+| `auto_update.exclude_appids` | `[]` | AppIDs to skip in automatic mode; **strings**, e.g. `["730"]` |
+| `jobs` | `[]` | Optional manual jobs and per-AppID overrides |
 
-## Job fields
+**Backward compatibility:** If an existing `config.json` has no `auto_update.enabled`, auto mode stays **disabled**. This prevents old installs from silently beginning in-place downloads after a software upgrade. Add `"auto_update": {"enabled": true}` explicitly to opt in. All other missing auto settings use safe defaults.
 
-| Key | Purpose |
-| --- | --- |
-| `enabled` | Must be `true` before SteamCMD can run for this job |
-| `detect_appid` | Local Steam `appmanifest_<appid>.acf` ID that must exist with its install folder |
-| `steamcmd_appid` | The SteamCMD AppID to download/update, which can be different from the local detected game |
-| `install_dir` | **Absolute**, isolated directory for SteamCMD app content, outside *all* detected Steam libraries |
-| `login` | Only `anonymous` is accepted in v0.1; no passwords, tokens, or personal Steam accounts |
-| `validate` | Optional, defaults to `false`; `true` performs slower integrity validation |
+## Precedence rules
 
-All fields use standard JSON (double quotes, backslashes doubled). Disabled jobs are ignored. Duplicate local AppIDs in separate libraries count as a single match for a job. A detected manifest without its corresponding `common/<installdir>` folder **does not trigger an update**.
+1. A configured `jobs` entry with a matching `detect_appid` overrides automatic handling of that AppID, even when `enabled` is `false`.
+2. If the manual entry is enabled, it runs using its configured **SteamCMD AppID** and **isolated target** (only when `require_manifest` is satisfied).
+3. If no manual override exists and auto mode is enabled, an installed, valid manifest adds an automatic job unless its AppID is in `exclude_appids`.
+4. **All enabled jobs require an active anonymous licence check**, with no bypass. No positive licence result means **no download attempt**.
+5. Automatic *in-place* updates additionally require Steam to be closed. A failed process check also causes a skip.
 
-### Why the two AppIDs?
+A detected manifest whose target folder is missing is inventoried but not auto-updated. Duplicate AppIDs installed in multiple Steam libraries produce separate automatic jobs, but their licence is checked only once per execution.
 
-The detected AppID is a *condition*. The SteamCMD AppID is the *actual application being maintained*. For example, a PC with the Counter-Strike client installed (`730`) could trigger a dedicated-server maintenance action for `740` if that separate server app supports SteamCMD. This mapping is an example only and should not be enabled on an ordinary client PC without a reason to maintain that server.
+## Manual job fields
 
-Use the *same* ID for both values if the discovered app itself is compatible with SteamCMD. No auto-updates happen for IDs not added to the allowlist.
+| Field | Required? | Explanation |
+| --- | --- | --- |
+| `enabled` | Optional | Default `false`. When false, acts as an automatic-mode exclusion for its `detect_appid`. |
+| `detect_appid` | Yes | AppID whose automatic handling is overridden; a condition if `require_manifest` is true |
+| `steamcmd_appid` | Required when enabled | The actual app SteamCMD checks and updates; may differ from `detect_appid` |
+| `install_dir` | Required when enabled | Absolute destination, outside Steam libraries and outside SteamCMD installation |
+| `require_manifest` | Optional | Default `true`; set `false` for a maintenance-only server with no client manifest |
+| `validate` | Optional | Default `false`; integrity validation increases disk activity |
+| `login` | Optional | Only `anonymous` accepted; credentials are never accepted |
+| `name` | Optional | Friendly name included in logs |
 
-## Safer rollout process
+**Examples** (fragments; insert them inside the JSON object):
 
-1. Run `discover` and confirm the program found the right games and libraries.
-2. Select one verified SteamCMD-compatible AppID, preferably a disposable test server installation.
-3. Choose an isolated `install_dir` you can safely recreate. **Never point to an ordinary Steam game install or Steam library root.**
-4. Set that job to `true`; run `run --dry-run`.
-5. Install SteamCMD, run `run` once while monitoring the log, and verify the application works.
-6. Allow the daily scheduled task to take over only after the manual test succeeds.
+```json
+"auto_update": {
+  "enabled": true,
+  "skip_if_steam_running": true,
+  "exclude_appids": ["730", "570"]
+},
+"jobs": [
+  {
+    "enabled": true,
+    "detect_appid": "896660",
+    "steamcmd_appid": "896660",
+    "install_dir": "D:\\DedicatedServers\\Example",
+    "require_manifest": false
+  },
+  {"enabled": false, "detect_appid": "252490"}
+]
+```
 
-`run` returns exit code `0` if all attempted updates have confirmed success, `1` if any update fails, and `2` for invalid configuration or other setup errors. With no eligible jobs, it exits `0` and reports the scan. The `doctor` command returns `1` if no Steam libraries are discovered or an eligible job needs SteamCMD installed.
+This is **an example of configuration mechanics**, not a promise that any given AppID is currently downloadable anonymously.
 
-## Steam client games on classroom PCs
+For **manual-only deployment**, set `auto_update.enabled` to `false`. For **manifest-only deployment**, leave `jobs` empty.
 
-For games students actually launch, Valve's supported mechanism is the Steam **client**, not this updater's SteamCMD backend. In Steam, configure Downloads > automatic update hours and per-game updates. Keep Steam signed in on the maintenance machines as permitted by institutional policy, consider Steam PC Café / content caching in large labs, and coordinate network access with IT.
+## Safety and licence evaluation
 
-The manifest scanner can still be used as an inventory report without permitting any SteamCMD job.
+A local AppID is considered for update, not automatically entitled. To authorise an attempt the script runs `steamcmd +login anonymous +licenses_for_app <appid> +quit`. It accepts only an **active licence package** with a matching AppID (if the package output lists Apps). No response / missing SteamCMD / login failure / timeout / unrecognised output = `unknown` and is **skipped**. Recognised missing or inactive licences = `denied` and **skipped**.
+
+This probe is read-only. It does not modify licences, request free licences or attempt downloads to test ownership. SteamCMD may still refuse the subsequent download because an active licence package **does not guarantee every depot or branch is accessible**.
+
+**Caution:** Auto mode writes directly to the installation folder discovered in the manifest. SteamCMD is not the Steam client, so this can leave Steam's manifest tracking inconsistent. Use Steam's own update settings for normal consumer titles and test auto mode on non-critical installations before wider rollout.
+
+## Exit codes / reports
+
+- `run`: `0` if no update *attempt* failed (including all skipped), `1` for attempted update failures, `2` for setup/config errors.
+- `doctor`: returns `1` for missing Steam libraries or missing SteamCMD with planned jobs.
+- Reports: `logs/YYYYMMDD-HHMMSS-ffffff.json`, including per-game `inventory`, `licence_checks`, `results` and skipped reasons; `.log` alongside for human review.
+- `run --dry-run`: performs read-only anonymous entitlement probes (when SteamCMD exists), **never** runs `app_update`.

@@ -1,4 +1,4 @@
-"""JSON configuration and validation."""
+"""JSON configuration and validation for automatic and explicit update modes."""
 from __future__ import annotations
 
 import json
@@ -7,6 +7,11 @@ from pathlib import Path
 
 class ConfigError(ValueError):
     pass
+
+
+def _appid(value, label: str):
+    if not isinstance(value, str) or not value.isdigit() or int(value) <= 0:
+        raise ConfigError(f'{label} must be a positive Steam AppID string')
 
 
 def load_config(path: Path) -> dict:
@@ -21,26 +26,47 @@ def load_config(path: Path) -> dict:
     for key in ('steam_roots', 'jobs'):
         if not isinstance(config.get(key, []), list):
             raise ConfigError(f'{key} must be a list')
+    if not all(isinstance(x, str) for x in config.get('steam_roots', [])):
+        raise ConfigError('steam_roots must contain strings')
+
+    auto = config.get('auto_update', {})
+    if not isinstance(auto, dict):
+        raise ConfigError('auto_update must be an object')
+    for key in ('enabled', 'validate', 'skip_if_steam_running'):
+        if not isinstance(auto.get(key, True if key != 'validate' else False), bool):
+            raise ConfigError(f'auto_update.{key} must be true or false')
+    excluded = auto.get('exclude_appids', [])
+    if not isinstance(excluded, list):
+        raise ConfigError('auto_update.exclude_appids must be a list')
+    for i, appid in enumerate(excluded):
+        _appid(appid, f'auto_update.exclude_appids[{i}]')
+
+    seen_jobs = set()
     for i, job in enumerate(config.get('jobs', [])):
         if not isinstance(job, dict):
             raise ConfigError(f'jobs[{i}] must be an object')
-        if not isinstance(job.get('enabled', False), bool):
-            raise ConfigError(f'jobs[{i}].enabled must be true or false')
+        for key in ('enabled', 'validate', 'require_manifest'):
+            if not isinstance(job.get(key, key == 'require_manifest'), bool):
+                raise ConfigError(f'jobs[{i}].{key} must be true or false')
+        _appid(job.get('detect_appid'), f'jobs[{i}].detect_appid')
+        if job['detect_appid'] in seen_jobs:
+            raise ConfigError(f'Multiple manual jobs for AppID {job["detect_appid"]}; use one per AppID')
+        seen_jobs.add(job['detect_appid'])
         if not job.get('enabled', False):
             continue
-        for key in ('detect_appid', 'steamcmd_appid', 'install_dir'):
+        for key in ('steamcmd_appid', 'install_dir'):
             if not isinstance(job.get(key), str) or not job[key].strip():
                 raise ConfigError(f'jobs[{i}].{key} must be a non-empty string')
-        for key in ('detect_appid', 'steamcmd_appid'):
-            if not job[key].isdigit() or int(job[key]) <= 0:
-                raise ConfigError(f'jobs[{i}].{key} must be a positive Steam AppID')
+        _appid(job['steamcmd_appid'], f'jobs[{i}].steamcmd_appid')
         if job.get('login', 'anonymous') != 'anonymous':
-            raise ConfigError('v0.1 permits only anonymous SteamCMD login (no passwords in config)')
-        if not isinstance(job.get('validate', False), bool):
-            raise ConfigError(f'jobs[{i}].validate must be true or false')
+            raise ConfigError('Only anonymous SteamCMD login is supported (no passwords in config)')
+
     timeout = config.get('timeout_minutes', 180)
     if not isinstance(timeout, int) or not (1 <= timeout <= 1440):
         raise ConfigError('timeout_minutes must be an integer from 1 to 1440')
+    licence_timeout = config.get('licence_timeout_seconds', 90)
+    if not isinstance(licence_timeout, int) or not (10 <= licence_timeout <= 600):
+        raise ConfigError('licence_timeout_seconds must be between 10 and 600')
     return config
 
 

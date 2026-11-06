@@ -4,7 +4,8 @@ param(
     [ValidatePattern('^([01][0-9]|2[0-3]):[0-5][0-9]$')]
     [string]$Time = '03:00',
     [switch]$NoSchedule,
-    [switch]$InstallSteamCMD
+    [switch]$InstallSteamCMD,
+    [switch]$SkipSteamCMD
 )
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'This guided setup currently supports Windows only.' }
@@ -34,7 +35,7 @@ if ($python.Prefix) { $pythonArgs += $python.Prefix }
 & $python.Command @pythonArgs -m steam_manifest_updater init
 if ($LASTEXITCODE -ne 0) { throw 'Failed to create config.json' }
 
-if ($InstallSteamCMD) {
+if (-not $SkipSteamCMD) {
     & (Join-Path $PSScriptRoot 'install-steamcmd.ps1')
 }
 & $python.Command @pythonArgs -m steam_manifest_updater discover
@@ -51,6 +52,7 @@ if (-not $NoSchedule) {
     Write-Host "Scheduled '$taskName' every day at $Time (only while this Windows user is logged in)." -ForegroundColor Green
 }
 Write-Host ''
-Write-Host 'NEXT: Edit config.json and enable only supported SteamCMD jobs.' -ForegroundColor Yellow
+Write-Host 'Automatic mode is enabled in NEW configs. Only anonymous-licensed apps can be attempted.' -ForegroundColor Yellow
+Write-Host 'For older configs, add auto_update.enabled=true to opt in. Configure exclusions and manual overrides as needed.'
 Write-Host 'TEST: py -3 -m steam_manifest_updater run --dry-run'
 Write-Host 'Docs: README.md and docs/CONFIGURATION.md'

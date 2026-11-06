@@ -7,6 +7,6 @@ if errorlevel 1 (
     echo Setup did not finish. See the message above and README.md.
 ) else (
     echo.
-    echo Setup complete. Edit config.json before enabling a SteamCMD job.
+    echo Setup complete. Review config.json and run a dry-run before the scheduled update.
 )
 pause

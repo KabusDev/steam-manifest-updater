@@ -34,4 +34,5 @@ class CLITests(unittest.TestCase):
             self.assertEqual(len(reports), 1)
             report = json.loads(reports[0].read_text())
             self.assertEqual(report['planned'][0]['steamcmd_appid'], '456')
-            self.assertEqual(report['results'], [])
+            self.assertEqual(report['results'][0]['status'], 'skipped')
+            self.assertEqual(report['licence_checks'][0]['status'], 'unknown')

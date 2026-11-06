@@ -1,11 +1,15 @@
 # Changelog
 
-## 0.1.0 - 2026-11-06
+## 0.2.0 (preview)
 
-- Initial Windows-first project draft.
-- Discover Steam libraries and installed apps using VDF/ACF files.
-- Explicit opt-in SteamCMD jobs with protected installation paths.
-- Dry-run, doctor, daily Windows scheduled task setup, reports and tests.
-- MIT license and beginner-focused documentation.
+- Automatic detection mode enabled in newly generated configurations. Installed manifests become candidate SteamCMD jobs without a per-game allowlist.
+- Read-only anonymous licence checks via `licenses_for_app`, with granted/denied/unknown statuses and fail-closed download gating.
+- Per-AppID manual job overrides, exclusions, manual-only mode, and `require_manifest: false` maintenance jobs.
+- Explicit Steam-client-running guard for in-place automatic jobs.
+- New JSON report inventory, entitlement results, and per-job skip reasons.
+- Guided Windows setup installs SteamCMD by default; `-SkipSteamCMD` optional.
+- Legacy configurations without `auto_update.enabled` remain opt-in rather than silently enabling downloads.
 
-Known gap: an ordinary Steam client's games must continue to update through Steam's supported client mechanisms.
+## 0.1.0
+
+- Read-only discovery of Steam libraries and manifests, opt-in SteamCMD maintenance jobs, daily scheduling, logs and unit tests.
