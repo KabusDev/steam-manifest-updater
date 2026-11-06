@@ -1,6 +1,6 @@
 ---
 name: Bug report
-description: Report a bug without exposing credentials or personal paths
+about: Report a bug without exposing credentials or personal paths
 ---
 
 **Environment:** Windows version, Python version, SteamCMD version
