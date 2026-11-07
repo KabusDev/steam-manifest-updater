@@ -12,6 +12,7 @@ from pathlib import Path
 from .config import ConfigError, load_config, project_path
 from .discovery import detect_steam_roots, discover
 from .runner import execute, plan_jobs, run_lock, write_summary
+from .licence_cache import LicenceCache
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -39,6 +40,9 @@ def main(argv=None):
     sub.add_parser('doctor', help='Check detection, SteamCMD and planned jobs')
     cmd = sub.add_parser('run', help='Check anonymous licences then update eligible apps')
     cmd.add_argument('--dry-run', action='store_true', help='Do read-only licence checks, no app downloads')
+    cmd.add_argument('--refresh-licences', action='store_true', help='Ignore cached licence decisions for this run')
+    scan = sub.add_parser('licences', help='One-session anonymous entitlement preflight; no downloads')
+    scan.add_argument('--refresh', action='store_true', help='Ignore cached licence decisions')
     args = p.parse_args(argv)
 
     try:
@@ -94,9 +98,20 @@ def main(argv=None):
                 logger.warning(warning)
             for entry in inventory:
                 logger.info('INVENTORY AppID %s: %s (%s)', entry['appid'], entry['status'], entry['reason'])
+            cache_config = config.get('licence_cache', {})
+            cache = LicenceCache(logdir / 'licence-cache.json',
+                                 denied_days=cache_config.get('denied_days', 7),
+                                 granted_hours=cache_config.get('granted_hours', 0),
+                                 cooldown_minutes=cache_config.get('cooldown_minutes', 60))
+            if cache.warning:
+                logger.warning(cache.warning)
+            only_licences = args.command == 'licences'
             results, licence_checks = execute(jobs, steamcmd, config.get('timeout_minutes', 180), logger,
                                                licence_timeout_seconds=config.get('licence_timeout_seconds', 90),
-                                               dry_run=args.dry_run)
+                                               dry_run=only_licences or args.dry_run,
+                                               licence_cache=cache,
+                                               refresh_licences=(args.refresh if only_licences else args.refresh_licences),
+                                               licences_only=only_licences)
             summary = {
                 'timestamp': datetime.now().astimezone().isoformat(),
                 'dry_run': args.dry_run,
@@ -105,6 +120,7 @@ def main(argv=None):
                 'inventory': inventory,
                 'planned': jobs,
                 'licence_checks': licence_checks,
+                'licence_cache': str(logdir / 'licence-cache.json'),
                 'results': results,
                 'warnings': warnings,
             }
