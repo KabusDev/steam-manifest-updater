@@ -47,9 +47,9 @@ class CacheTests(unittest.TestCase):
 
     def test_malformed_package_does_not_hide_valid_grants(self):
         output = (
-            'Connecting anonymously to Steam Public...OK\\n'
-            'License packageID 100:\\n- State : Active\\n- Apps : 4000 (3 in total)\\n'
-            'License packageID 200:\\n- State : Active\\n- Apps : 440, 730 (2 in total)\\n'
+            'Connecting anonymously to Steam Public...OK\n'
+            'License packageID 100:\n- State : Active\n- Apps : 4000 (3 in total)\n'
+            'License packageID 200:\n- State : Active\n- Apps : 440, 730 (2 in total)\n'
         )
         results = parse_snapshot(output, IDS)
         self.assertEqual(results['4000']['status'], 'granted')
