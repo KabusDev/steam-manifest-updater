@@ -118,7 +118,7 @@ def main(argv=None):
                                                licences_only=only_licences)
             summary = {
                 'timestamp': datetime.now().astimezone().isoformat(),
-                'dry_run': args.dry_run,
+                'dry_run': only_licences or args.dry_run,
                 'manifests': len(apps),
                 'libraries': [str(x) for x in libraries],
                 'inventory': inventory,
