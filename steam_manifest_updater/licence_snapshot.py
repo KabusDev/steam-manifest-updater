@@ -47,8 +47,8 @@ def parse_snapshot(output: str, appids: list[str]) -> dict[str, dict]:
             continue
         line = apps.group(1)
         listing = line.split('(')[0]
-        listed_ids = set(re.findall(r"\\b\\d+\\b", listing))
-        count = re.search(r"\\((\\d+)\\s+in\\s+total\\)", line, re.IGNORECASE)
+        listed_ids = set(re.findall(r"\b\d+\b", listing))
+        count = re.search(r"\((\d+)\s+in\s+total\)", line, re.IGNORECASE)
         if not listed_ids or (count and len(listed_ids) != int(count.group(1))):
             reported = count.group(1) if count else 'not supplied'
             incomplete.append(f'package {package_id}: parsed {len(listed_ids)} AppIDs, reported {reported}')
