@@ -146,7 +146,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -NoSchedule
 # Keep an existing manual SteamCMD installation / skip Valve download:
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -SkipSteamCMD
 
-# Skip the read-only setup licence preflight:\npowershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -SkipLicenceScan\n\n# Uninstall the scheduled task (leaves config and logs alone):
+# Skip the read-only setup licence preflight:
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -SkipLicenceScan
+
+# Uninstall the scheduled task (leaves config and logs alone):
 powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-task.ps1
 ```
 
