@@ -1,5 +1,7 @@
 # Steam Manifest Auto-Updater
 
+# This project is co-developed with AI assisted tools
+
 **Windows-first | Python 3.10+ | MIT licence | v0.3.0 (preview)**
 
 Discovers locally installed Steam apps from `appmanifest_<AppID>.acf` files, checks **SteamCMD anonymous licences before attempting downloads**, and runs eligible updates on a daily schedule. Also supports **explicit config-only maintenance jobs** for dedicated servers and other special cases.
