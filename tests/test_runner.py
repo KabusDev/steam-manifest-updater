@@ -72,7 +72,7 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(len(jobs), 1)
             self.assertEqual(jobs[0]['mode'], 'manual')
             self.assertEqual(jobs[0]['steamcmd_appid'], '740')
-            self.assertEqual(jobs[0]['install_dir'], str(root / 'servers/csgo'))
+            self.assertEqual(Path(jobs[0]['install_dir']).resolve(), (root / 'servers/csgo').resolve())
             self.assertEqual(inventory[0]['status'], 'explicit')
 
     def test_manual_only_without_manifest(self):
