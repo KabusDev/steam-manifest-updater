@@ -96,8 +96,11 @@ def main(argv=None):
             logger.info('Found %d manifest(s) in %d libraries; %d candidate job(s)', len(apps), len(libraries), len(jobs))
             for warning in warnings:
                 logger.warning(warning)
-            for entry in inventory:
-                logger.info('INVENTORY AppID %s: %s (%s)', entry['appid'], entry['status'], entry['reason'])
+            skipped_inventory = [entry for entry in inventory if entry['status'] == 'skipped']
+            logger.info('Inventory: %d planned, %d skipped; full details in JSON report',
+                        sum(entry['status'] == 'planned' for entry in inventory), len(skipped_inventory))
+            for entry in skipped_inventory:
+                logger.info('INVENTORY SKIP AppID %s: %s', entry['appid'], entry['reason'])
             cache_config = config.get('licence_cache', {})
             cache = LicenceCache(logdir / 'licence-cache.json',
                                  denied_days=cache_config.get('denied_days', 7),
