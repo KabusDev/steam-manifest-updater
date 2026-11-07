@@ -67,6 +67,17 @@ def load_config(path: Path) -> dict:
     licence_timeout = config.get('licence_timeout_seconds', 90)
     if not isinstance(licence_timeout, int) or not (10 <= licence_timeout <= 600):
         raise ConfigError('licence_timeout_seconds must be between 10 and 600')
+    cache = config.get('licence_cache', {})
+    if not isinstance(cache, dict):
+        raise ConfigError('licence_cache must be an object')
+    for key, minimum, maximum, default in [
+        ('denied_days', 0, 30, 7),
+        ('granted_hours', 0, 168, 0),
+        ('cooldown_minutes', 1, 1440, 60),
+    ]:
+        value = cache.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            raise ConfigError(f'licence_cache.{key} must be an integer from {minimum} to {maximum}')
     return config
 
 

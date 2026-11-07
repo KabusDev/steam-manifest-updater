@@ -10,5 +10,10 @@
     "skip_if_steam_running": true,
     "exclude_appids": []
   },
-  "jobs": []
+  "jobs": [],
+  "licence_cache": {
+    "denied_days": 7,
+    "granted_hours": 0,
+    "cooldown_minutes": 60
+  }
 }

@@ -12,6 +12,7 @@ from pathlib import Path
 from .config import ConfigError, load_config, project_path
 from .discovery import detect_steam_roots, discover
 from .runner import execute, plan_jobs, run_lock, write_summary
+from .licence_cache import LicenceCache
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -39,8 +40,12 @@ def main(argv=None):
     sub.add_parser('doctor', help='Check detection, SteamCMD and planned jobs')
     cmd = sub.add_parser('run', help='Check anonymous licences then update eligible apps')
     cmd.add_argument('--dry-run', action='store_true', help='Do read-only licence checks, no app downloads')
+    cmd.add_argument('--refresh-licences', action='store_true', help='Ignore cached licence decisions for this run')
+    scan = sub.add_parser('licences', help='One-session anonymous entitlement preflight; no downloads')
+    scan.add_argument('--refresh', action='store_true', help='Ignore cached licence decisions')
     args = p.parse_args(argv)
 
+    logger = None
     try:
         if args.command == 'init':
             template = REPO / 'config.example.json'
@@ -92,11 +97,25 @@ def main(argv=None):
             logger.info('Found %d manifest(s) in %d libraries; %d candidate job(s)', len(apps), len(libraries), len(jobs))
             for warning in warnings:
                 logger.warning(warning)
-            for entry in inventory:
-                logger.info('INVENTORY AppID %s: %s (%s)', entry['appid'], entry['status'], entry['reason'])
+            skipped_inventory = [entry for entry in inventory if entry['status'] == 'skipped']
+            logger.info('Inventory: %d planned, %d skipped; full details in JSON report',
+                        sum(entry['status'] == 'planned' for entry in inventory), len(skipped_inventory))
+            for entry in skipped_inventory:
+                logger.info('INVENTORY SKIP AppID %s: %s', entry['appid'], entry['reason'])
+            cache_config = config.get('licence_cache', {})
+            cache = LicenceCache(logdir / 'licence-cache.json',
+                                 denied_days=cache_config.get('denied_days', 7),
+                                 granted_hours=cache_config.get('granted_hours', 0),
+                                 cooldown_minutes=cache_config.get('cooldown_minutes', 60))
+            if cache.warning:
+                logger.warning(cache.warning)
+            only_licences = args.command == 'licences'
             results, licence_checks = execute(jobs, steamcmd, config.get('timeout_minutes', 180), logger,
                                                licence_timeout_seconds=config.get('licence_timeout_seconds', 90),
-                                               dry_run=args.dry_run)
+                                               dry_run=only_licences or args.dry_run,
+                                               licence_cache=cache,
+                                               refresh_licences=(args.refresh if only_licences else args.refresh_licences),
+                                               licences_only=only_licences)
             summary = {
                 'timestamp': datetime.now().astimezone().isoformat(),
                 'dry_run': args.dry_run,
@@ -105,6 +124,7 @@ def main(argv=None):
                 'inventory': inventory,
                 'planned': jobs,
                 'licence_checks': licence_checks,
+                'licence_cache': str(logdir / 'licence-cache.json'),
                 'results': results,
                 'warnings': warnings,
             }
@@ -118,6 +138,12 @@ def main(argv=None):
     except (ConfigError, OSError, ValueError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2
+    finally:
+        if logger is not None:
+            for handler in list(logger.handlers):
+                handler.flush()
+                handler.close()
+                logger.removeHandler(handler)
 
 
 if __name__ == '__main__':

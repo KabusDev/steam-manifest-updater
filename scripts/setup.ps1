@@ -5,7 +5,8 @@ param(
     [string]$Time = '03:00',
     [switch]$NoSchedule,
     [switch]$InstallSteamCMD,
-    [switch]$SkipSteamCMD
+    [switch]$SkipSteamCMD,
+    [switch]$SkipLicenceScan
 )
 $ErrorActionPreference = 'Stop'
 if ($env:OS -ne 'Windows_NT') { throw 'This guided setup currently supports Windows only.' }
@@ -41,6 +42,17 @@ if (-not $SkipSteamCMD) {
 & $python.Command @pythonArgs -m steam_manifest_updater discover
 if ($LASTEXITCODE -ne 0) { throw 'Steam discovery failed.' }
 
+if (-not $SkipLicenceScan) {
+    Write-Host ''
+    Write-Host 'Performing one-session anonymous licence preflight (no game downloads)...' -ForegroundColor Cyan
+    & $python.Command @pythonArgs -m steam_manifest_updater licences
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning 'Licence scan did not complete. Setup will continue; updates still fail closed.'
+    } else {
+        Write-Host 'Anonymous licence preflight complete. Review logs and licence-cache.json.' -ForegroundColor Green
+    }
+}
+
 if (-not $NoSchedule) {
     $taskName = 'Steam Manifest Auto-Updater'
     $principal = New-ScheduledTaskPrincipal -UserId ([Security.Principal.WindowsIdentity]::GetCurrent().Name) -LogonType Interactive -RunLevel Limited
@@ -54,5 +66,6 @@ if (-not $NoSchedule) {
 Write-Host ''
 Write-Host 'Automatic mode is enabled in NEW configs. Only anonymous-licensed apps can be attempted.' -ForegroundColor Yellow
 Write-Host 'For older configs, add auto_update.enabled=true to opt in. Configure exclusions and manual overrides as needed.'
-Write-Host 'TEST: py -3 -m steam_manifest_updater run --dry-run'
+Write-Host 'TEST: double-click TEST-DRY-RUN.bat, or run: py -3 -m steam_manifest_updater run --dry-run'
+Write-Host 'RECHECK: py -3 -m steam_manifest_updater licences --refresh'
 Write-Host 'Docs: README.md and docs/CONFIGURATION.md'

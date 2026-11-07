@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.0 (preview)
+
+- One-session anonymous entitlement snapshot using SteamCMD `licenses_print`, replacing per-AppID logins for CLI users.
+- Read-only licence preflight runs during guided setup; skip with `-SkipLicenceScan`.
+- Persistent seven-day denial cache, uncached grant checks, and explicit refresh commands.
+- Cooldown on detected SteamCMD rate limiting; unrecognised or incomplete output safely skips updates.
+- Condensed console logging with complete inventory and per-app decisions retained in JSON reports.
+- Closed Windows log handles after each run; improved Windows CI coverage and licence-cache tests.
+- Original Steam desktop client and depot-access compatibility warnings remain applicable.
+
 ## 0.2.0 (preview)
 
 - Automatic detection mode enabled in newly generated configurations. Installed manifests become candidate SteamCMD jobs without a per-game allowlist.

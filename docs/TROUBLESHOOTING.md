@@ -26,7 +26,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install-steamcmd.ps1
 
 ### SteamCMD anonymous licence is unknown / denied
 
-The app manifest belongs to the **local Steam client**. It says nothing about the rights of SteamCMD's **anonymous** session. The tool uses `licenses_for_app` to check active packages and will not start downloads for unknown or missing access. SteamCMD may change its output format, so please report sanitised output if an AppID you know supports anonymous access is being skipped.
+The app manifest belongs to the **local Steam client**. It says nothing about the rights of SteamCMD's **anonymous** session. The tool uses one `licenses_print` snapshot to check active packages and will not start downloads for unknown or missing access. SteamCMD may change its output format, so please report sanitised output if an AppID you know supports anonymous access is being skipped.
 
 ### The update still fails despite an active licence
 
@@ -55,3 +55,13 @@ The README uses `-ExecutionPolicy Bypass` for the one script invocation. If orga
 ### Where are credentials stored?
 
 Nowhere. The only Steam login supported is `+login anonymous`. The tool never asks for Steam usernames, passwords or tokens.
+
+### Why is the first licence scan longer than later runs?
+
+The first setup scan uses one SteamCMD login to inspect the anonymous account's entire licence listing. Denials are cached locally for seven days, so subsequent runs normally skip those AppIDs without querying Valve again. Check `logs/licence-cache.json` and `licence_checks` in the run's JSON report. `cached: true` means the skip came from stored evidence.
+
+Use `py -3 -m steam_manifest_updater licences --refresh` if anonymous access to a previously denied AppID has changed. This requests a new entitlement snapshot and never starts an update.
+
+### A rate limit is detected
+
+The updater starts a cooldown (default 60 minutes), skips unverified applications, and avoids additional anonymous entitlement requests during that period. Avoid running many copies of this program simultaneously on the same public IP address.

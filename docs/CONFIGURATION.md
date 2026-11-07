@@ -8,12 +8,15 @@
 | `steamcmd_path` | `tools/steamcmd/steamcmd.exe` | SteamCMD executable |
 | `log_dir` | `logs` | Log files and JSON inventory/licence reports |
 | `timeout_minutes` | `180` | Limit for each SteamCMD *download* (1–1440) |
-| `licence_timeout_seconds` | `90` | Limit for each read-only entitlement query (10–600) |
+| `licence_timeout_seconds` | `90` | Limit for one complete anonymous entitlement snapshot (10–600) |
 | `auto_update.enabled` | **`true` in new template** | Scan local manifests and plan their AppIDs automatically |
 | `auto_update.validate` | `false` | Run SteamCMD `validate` on auto jobs (more IO) |
 | `auto_update.skip_if_steam_running` | `true` | Refuse in-place SteamCMD updates while Steam is open, or its state cannot be checked |
 | `auto_update.exclude_appids` | `[]` | AppIDs to skip in automatic mode; **strings**, e.g. `["730"]` |
 | `jobs` | `[]` | Optional manual jobs and per-AppID overrides |
+| `licence_cache.denied_days` | `7` | Cache anonymous denials; 0 disables denial caching |
+| `licence_cache.granted_hours` | `0` | Grant-cache lifespan; default rechecks grants each run |
+| `licence_cache.cooldown_minutes` | `60` | Cooldown after a detected SteamCMD rate limit |
 
 **Backward compatibility:** If an existing `config.json` has no `auto_update.enabled`, auto mode stays **disabled**. This prevents old installs from silently beginning in-place downloads after a software upgrade. Add `"auto_update": {"enabled": true}` explicitly to opt in. All other missing auto settings use safe defaults.
 
@@ -64,13 +67,25 @@ This is **an example of configuration mechanics**, not a promise that any given 
 
 For **manual-only deployment**, set `auto_update.enabled` to `false`. For **manifest-only deployment**, leave `jobs` empty.
 
-## Safety and licence evaluation
+## Safety, one-session preflight and cache
 
-A local AppID is considered for update, not automatically entitled. To authorise an attempt the script runs `steamcmd +login anonymous +licenses_for_app <appid> +quit`. It accepts only an **active licence package** with a matching AppID (if the package output lists Apps). No response / missing SteamCMD / login failure / timeout / unrecognised output = `unknown` and is **skipped**. Recognised missing or inactive licences = `denied` and **skipped**.
+`SETUP.bat` runs a read-only anonymous preflight by default after SteamCMD is downloaded. It uses **one SteamCMD login** with `+licenses_print`, then checks the active package's explicit AppID listings against each detected manifest. Previously, each AppID required a separate SteamCMD login.
 
-This probe is read-only. It does not modify licences, request free licences or attempt downloads to test ownership. SteamCMD may still refuse the subsequent download because an active licence package **does not guarantee every depot or branch is accessible**.
+The result goes to `logs/licence-cache.json`. Denied AppIDs are cached for seven days by default and silently skipped on subsequent days (with the cache decision shown in logs). Granted entries are **rechecked by default**; expired and new AppIDs are inspected together in a single login.
 
-**Caution:** Auto mode writes directly to the installation folder discovered in the manifest. SteamCMD is not the Steam client, so this can leave Steam's manifest tracking inconsistent. Use Steam's own update settings for normal consumer titles and test auto mode on non-critical installations before wider rollout.
+To recheck all detected games manually, without any downloads:
+
+```powershell
+py -3 -m steam_manifest_updater licences --refresh
+```
+
+To disable the automatic setup scan, launch `scripts/setup.ps1 -SkipLicenceScan`. This does not disable checks before actual updates.
+
+`unknown` and `rate_limited` decisions are never stored as seven-day denials. A rate limit instead starts a configured cooldown. A cached denial never bypasses manual overrides: an override for a **different SteamCMD AppID** gets its own entitlement decision. `--refresh-licences` forces a refresh during a normal run.
+
+This check is read-only. It does not request free licences or attempt downloads to test ownership. An active package with a matching AppID is still **not proof that the target depots are downloadable**. SteamCMD's human-readable console format is not a supported stable API, so malformed, empty, truncated or unrecognised output fails closed as `unknown`.
+
+**Caution:** Auto mode writes directly to the installation folder discovered in the manifest. SteamCMD can leave Steam's desktop-client tracking inconsistent. Test on a non-critical machine before use.
 
 ## Exit codes / reports
 
