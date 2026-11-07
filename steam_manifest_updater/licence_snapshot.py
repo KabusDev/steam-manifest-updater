@@ -35,27 +35,34 @@ def parse_snapshot(output: str, appids: list[str]) -> dict[str, dict]:
         return {aid: {'status': 'unknown', 'reason': 'unrecognised or empty anonymous licence listing'} for aid in ids}
 
     granted = {}
+    incomplete = []
     for i, match in enumerate(headers):
         block = output[match.end():headers[i+1].start() if i+1 < len(headers) else len(output)]
         if not ACTIVE.search(block):
             continue
         apps = APPS.search(block)
+        package_id = match.group(1)
         if not apps:
-            # Missing package membership means we cannot safely conclude
-            # entitlement, or non-entitlement, for other apps.
-            return {aid: {'status': 'unknown', 'reason': 'active licence package lacks AppID list'} for aid in ids}
+            incomplete.append(f'package {package_id}: no AppID list')
+            continue
         line = apps.group(1)
         listing = line.split('(')[0]
         listed_ids = set(re.findall(r"\b\d+\b", listing))
         count = re.search(r"\((\d+)\s+in\s+total\)", line, re.IGNORECASE)
-        if count and len(listed_ids) != int(count.group(1)):
-            return {aid: {'status': 'unknown', 'reason': 'licence package AppID list is incomplete'} for aid in ids}
-        if not listed_ids:
-            return {aid: {'status': 'unknown', 'reason': 'licence package AppID list is empty'} for aid in ids}
+        if not listed_ids or (count and len(listed_ids) != int(count.group(1))):
+            reported = count.group(1) if count else 'not supplied'
+            incomplete.append(f'package {package_id}: parsed {len(listed_ids)} AppIDs, reported {reported}')
+        # Explicit package membership is useful evidence even if its list is
+        # truncated. Never infer DENIED from a partially parsed snapshot.
         for aid in listed_ids & ids:
             granted[aid] = {'status': 'granted',
-                            'reason': 'anonymous licence snapshot explicitly includes this AppID',
-                            'package_id': match.group(1)}
+                            'reason': 'active anonymous licence explicitly lists this AppID',
+                            'package_id': package_id}
+    if incomplete:
+        reason = ('incomplete anonymous licence snapshot: ' +
+                  '; '.join(incomplete[:5]) +
+                  (f'; and {len(incomplete) - 5} more packages' if len(incomplete) > 5 else ''))
+        return {aid: granted.get(aid, {'status': 'unknown', 'reason': reason}) for aid in ids}
     return {aid: granted.get(aid, {'status': 'denied',
                                    'reason': 'no active package in anonymous licence snapshot lists AppID'})
             for aid in ids}
