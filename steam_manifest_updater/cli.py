@@ -45,6 +45,7 @@ def main(argv=None):
     scan.add_argument('--refresh', action='store_true', help='Ignore cached licence decisions')
     args = p.parse_args(argv)
 
+    logger = None
     try:
         if args.command == 'init':
             template = REPO / 'config.example.json'
@@ -137,6 +138,12 @@ def main(argv=None):
     except (ConfigError, OSError, ValueError) as exc:
         print(f'ERROR: {exc}', file=sys.stderr)
         return 2
+    finally:
+        if logger is not None:
+            for handler in list(logger.handlers):
+                handler.flush()
+                handler.close()
+                logger.removeHandler(handler)
 
 
 if __name__ == '__main__':
