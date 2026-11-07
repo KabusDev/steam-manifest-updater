@@ -1,6 +1,6 @@
 # Steam Manifest Auto-Updater
 
-**Windows-first | Python 3.10+ | MIT licence | v0.2.0 (preview)**
+**Windows-first | Python 3.10+ | MIT licence | v0.3.0 (preview)**
 
 Discovers locally installed Steam apps from `appmanifest_<AppID>.acf` files, checks **SteamCMD anonymous licences before attempting downloads**, and runs eligible updates on a daily schedule. Also supports **explicit config-only maintenance jobs** for dedicated servers and other special cases.
 
@@ -11,7 +11,7 @@ Discovers locally installed Steam apps from `appmanifest_<AppID>.acf` files, che
 
 1. Install [Python 3.10+](https://www.python.org/downloads/windows/) if necessary.
 2. Download this repository as a ZIP, extract it to a permanent folder, and double-click **`SETUP.bat`**.
-3. Setup creates `config.json` (without overwriting an existing one), downloads SteamCMD **directly from Valve** if it is not installed, scans Steam libraries, and registers the daily **03:00** current-user scheduled task.
+3. Setup creates `config.json` (without overwriting an existing one), downloads SteamCMD **directly from Valve** if it is not installed, scans Steam libraries, performs a **read-only, single-session anonymous licence inventory**, and registers the daily **03:00** current-user scheduled task.
 4. Open a terminal in the extracted folder and run the dry run **before allowing the daily task to update anything**:
 
    ```powershell
@@ -94,26 +94,40 @@ You can also keep `auto_update.enabled: true` while listing manual overrides. Fo
 
 See [Configuration](docs/CONFIGURATION.md) for precedence and examples.
 
-## Anonymous licence checks and logs
+## Fast anonymous licence preflight, caching and logs
 
-For each eligible AppID, SteamCMD runs a **read-only** command:
+**New in v0.3:** a single SteamCMD session runs `+login anonymous +licenses_print +quit`, parses the anonymous account's active packages and their explicit AppID lists, and compares those AppIDs to the installed manifests. This replaces the previous **one-SteamCMD-login-per-game** approach. The preflight does not download game content.
 
-```text
-steamcmd.exe +login anonymous +licenses_for_app <AppID> +quit
+During setup this check runs automatically, before registering the daily task. To run it again without updating games:
+
+```powershell
+py -3 -m steam_manifest_updater licences
 ```
 
-Only a recognised **active licence package** for the target AppID allows a subsequent `app_update`. The result is written to the console, a timestamped `.log`, and a structured `.json` report inside `logs/`.
+To ignore previously cached denials and force a full new entitlement check:
 
-| Licence result | Action |
+```powershell
+py -3 -m steam_manifest_updater licences --refresh
+```
+
+To force a new check during a regular update, use `run --refresh-licences`. `TEST-DRY-RUN.bat` remains read-only.
+
+Results are stored in `logs/licence-cache.json` and reflected in timestamped `.log` and `.json` reports. Denied AppIDs are cached for **seven days**, so a typical subsequent run only checks new or expired entries. Granted entries are **rechecked on every run by default**, because package visibility does not guarantee depot download access. Cache settings are adjustable via `licence_cache` in `config.json`.
+
+| Result | Action |
 | --- | --- |
-| `granted` | Update may be attempted, subject to safety checks |
-| `denied` | Skip; no matching active licence reported |
-| `unknown` | Skip; response unrecognised, login/probe failed, timed out, or SteamCMD missing |
+| `granted` | Eligible to try SteamCMD update; depot access remains unverified |
+| `denied` | Skip; cache for seven days by default |
+| `unknown` | Skip; do **not** store a long-lived denial |
+| `rate_limited` | Skip; persist a 60-minute cooldown and stop new entitlement requests |
 
-The JSON report contains `inventory`, `planned`, `licence_checks`, and `results`. **A granted licence does not guarantee depot access**; an update can still fail later and will be recorded as `failed`. Licence probes are performed once per unique AppID per run, even when multiple jobs use it. `--dry-run` still performs these read-only checks, but never runs `app_update`.
+The parser requires recognised active packages with explicit AppID lists. Missing lists, truncated package information, unexpected responses and failed logins are treated as **unknown**. As Valve's console output is not a documented stable API, production testing on Windows is essential.
 
 > [!IMPORTANT]
-> **Steam must be closed for automatic in-place jobs.** The updater checks whether `steam.exe` is running on Windows and skips those jobs if it is running *or the check cannot be completed*. Close running games too. Manual jobs are restricted to separate folders outside Steam client libraries.
+> An anonymous SteamCMD package can grant access to **server depots** without granting the regular desktop game's content. A `granted` licence is only a preliminary eligibility check; updates may still fail. Local manifests do not prove ownership by the anonymous account.
+
+> [!IMPORTANT]
+> **Steam must be closed for automatic in-place jobs.** The updater skips these jobs if Steam is running or the process check fails. Manual jobs must target separate folders.
 
 ## Scheduling
 
@@ -132,7 +146,7 @@ powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -NoSchedule
 # Keep an existing manual SteamCMD installation / skip Valve download:
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -SkipSteamCMD
 
-# Uninstall the scheduled task (leaves config and logs alone):
+# Skip the read-only setup licence preflight:\npowershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -SkipLicenceScan\n\n# Uninstall the scheduled task (leaves config and logs alone):
 powershell -ExecutionPolicy Bypass -File .\scripts\uninstall-task.ps1
 ```
 
