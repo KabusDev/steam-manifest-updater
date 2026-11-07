@@ -232,18 +232,24 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
             logger.info('Anonymous licence snapshot: %d AppIDs checked using one SteamCMD session', len(uncached))
     results = []
     steam_state = None
+    logged_licences = set()
+    cached_denials = 0
     for job in jobs:
         appid = job['steamcmd_appid']
         if appid not in checks:
             checks[appid] = check_anonymous_licence(steamcmd, appid, licence_timeout_seconds)
         check = checks[appid]
-        logger.info('LICENCE AppID %s: %s%s (%s)', appid, check['status'].upper(),
-                    ' [CACHE]' if check.get('cached') else '', check['reason'])
+        if appid not in logged_licences:
+            logged_licences.add(appid)
+            if check.get('cached') and check['status'] == 'denied':
+                cached_denials += 1
+            else:
+                logger.info('LICENCE AppID %s: %s%s (%s)', appid, check['status'].upper(),
+                            ' [CACHE]' if check.get('cached') else '', check['reason'])
         base = {**job, 'licence_status': check['status']}
         if check['status'] != 'granted':
             reason = f'Skipped: anonymous licence {check["status"]}: {check["reason"]}'
             results.append({**base, 'status': 'skipped', 'success': None, 'message': reason})
-            logger.info('%s AppID %s', reason, appid)
             continue
         if job.get('skip_if_steam_running', False) and not licences_only:
             if steam_state is None:
@@ -279,6 +285,8 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
             ok, message = False, f'Could not launch SteamCMD: {exc}'
         results.append({**base, 'status': 'updated' if ok else 'failed', 'success': ok, 'message': message})
         logger.info('%s: AppID %s: %s', 'OK' if ok else 'FAILED', appid, message)
+    if cached_denials:
+        logger.info('Skipped %d cached anonymous-licence denials (details in JSON report)', cached_denials)
     return results, [{'appid': appid, **status} for appid, status in sorted(checks.items(), key=lambda x:int(x[0]))]
 
 
