@@ -98,7 +98,7 @@ See [Configuration](docs/CONFIGURATION.md) for precedence and examples.
 
 **New in v0.3:** a single SteamCMD session runs `+login anonymous +licenses_print +quit`, parses the anonymous account's active packages and their explicit AppID lists, and compares those AppIDs to the installed manifests. This replaces the previous **one-SteamCMD-login-per-game** approach. The preflight does not download game content.
 
-During setup this check runs automatically, before registering the daily task. To run it again without updating games:
+During setup this check runs automatically, before registering the daily task. You can also double-click **`CHECK-LICENCES.bat`** for a safe read-only check. Run `CHECK-LICENCES.bat refresh` to force a new licence snapshot. The equivalent terminal command is:
 
 ```powershell
 py -3 -m steam_manifest_updater licences
