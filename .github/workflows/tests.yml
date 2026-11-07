@@ -1,17 +1,48 @@
-name: Python tests
+name: Python checks
+
 on:
   push:
+    branches: [main]
+    paths:
+      - 'steam_manifest_updater/**'
+      - 'tests/**'
+      - '.github/workflows/tests.yml'
   pull_request:
+    paths:
+      - 'steam_manifest_updater/**'
+      - 'tests/**'
+      - '.github/workflows/tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# When several commits land quickly, avoid testing an obsolete intermediate state.
+concurrency:
+  group: python-checks-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  tests:
+  unit-tests:
+    name: Python ${{ matrix.python-version }} / Windows
     runs-on: windows-latest
+    timeout-minutes: 15
     strategy:
+      fail-fast: false
       matrix:
         python-version: ['3.10', '3.13']
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Check out source
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
+      - name: Show Python version
+        run: python --version
+      - name: Check Python syntax
+        run: python -m compileall -q steam_manifest_updater tests
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
