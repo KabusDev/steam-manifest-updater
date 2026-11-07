@@ -40,7 +40,21 @@ class CacheTests(unittest.TestCase):
 
     def test_snapshot_truncated_listing_fails_closed(self):
         modified = OUTPUT.replace('4000, 440, 730 (3 in total)', '4000 (3 in total)')
-        self.assertEqual(parse_snapshot(modified, IDS)['4000']['status'], 'unknown')
+        results = parse_snapshot(modified, IDS)
+        self.assertEqual(results['4000']['status'], 'granted')
+        self.assertEqual(results['1517290']['status'], 'unknown')
+        self.assertIn('parsed 1 AppIDs, reported 3', results['1517290']['reason'])
+
+    def test_malformed_package_does_not_hide_valid_grants(self):
+        output = (
+            'Connecting anonymously to Steam Public...OK\n'
+            'License packageID 100:\n- State : Active\n- Apps : 4000 (3 in total)\n'
+            'License packageID 200:\n- State : Active\n- Apps : 440, 730 (2 in total)\n'
+        )
+        results = parse_snapshot(output, IDS)
+        self.assertEqual(results['4000']['status'], 'granted')
+        self.assertEqual(results['440']['status'], 'granted')
+        self.assertEqual(results['1517290']['status'], 'unknown')
 
     def test_snapshot_unrecognised_fails_closed(self):
         self.assertEqual(parse_snapshot('No licences returned', IDS)['4000']['status'], 'unknown')
