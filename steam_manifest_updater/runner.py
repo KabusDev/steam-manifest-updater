@@ -234,6 +234,7 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
     steam_state = None
     logged_licences = set()
     cached_denials = 0
+    grouped_unknowns = {}
     for job in jobs:
         appid = job['steamcmd_appid']
         if appid not in checks:
@@ -243,6 +244,9 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
             logged_licences.add(appid)
             if check.get('cached') and check['status'] == 'denied':
                 cached_denials += 1
+            elif check['status'] in ('unknown', 'rate_limited'):
+                key = (check['status'], check['reason'])
+                grouped_unknowns[key] = grouped_unknowns.get(key, 0) + 1
             else:
                 logger.info('LICENCE AppID %s: %s%s (%s)', appid, check['status'].upper(),
                             ' [CACHE]' if check.get('cached') else '', check['reason'])
@@ -285,6 +289,9 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
             ok, message = False, f'Could not launch SteamCMD: {exc}'
         results.append({**base, 'status': 'updated' if ok else 'failed', 'success': ok, 'message': message})
         logger.info('%s: AppID %s: %s', 'OK' if ok else 'FAILED', appid, message)
+    for (status, reason), count in sorted(grouped_unknowns.items()):
+        logger.warning('LICENCE %s: %d AppID(s) skipped: %s (details in JSON report)',
+                       status.upper(), count, reason)
     if cached_denials:
         logger.info('Skipped %d cached anonymous-licence denials (details in JSON report)', cached_denials)
     return results, [{'appid': appid, **status} for appid, status in sorted(checks.items(), key=lambda x:int(x[0]))]
