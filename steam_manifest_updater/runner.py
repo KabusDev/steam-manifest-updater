@@ -15,6 +15,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from .config import ConfigError, project_path
+from .licence_cache import LicenceCache
+from .licence_snapshot import check_anonymous_licences_bulk
 
 SUCCESS_PATTERN = re.compile(r"(?im)^\s*Success!\s+App\b")
 ERROR_PATTERN = re.compile(r"(?im)^\s*(?:ERROR!|Error!)\s+(?:Failed|App\b)")
@@ -139,10 +141,11 @@ def parse_licence_result(output: str, appid: str) -> dict:
         if int(match.group(1)) == 0 or not ACTIVE_STATE.search(block):
             continue
         apps_match = APPS_LINE.search(block)
-        if apps_match:
-            ids = re.findall(r'\b\d+\b', apps_match.group(1).split('(')[0])
-            if appid not in ids:
-                continue
+        if not apps_match:
+            return {'status': 'unknown', 'reason': 'licence package lacks an explicit AppID list'}
+        ids = re.findall(r'\b\d+\b', apps_match.group(1).split('(')[0])
+        if appid not in ids:
+            continue
         return {'status': 'granted', 'reason': 'anonymous SteamCMD reported an active licence package',
                 'package_id': match.group(1)}
     if headers or re.search(r'(?i)\b(?:no (?:active )?licen[cs]es?|no subscription)\b', output):
@@ -195,38 +198,66 @@ def steam_client_running() -> bool | None:
 
 
 def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
-            licence_timeout_seconds: int = 90, dry_run: bool = False) -> tuple[list[dict], list[dict]]:
-    """Preflight each unique AppID, skip unknown/denied; never bypass the check.
+            licence_timeout_seconds: int = 90, dry_run: bool = False,
+            licence_cache: LicenceCache | None = None,
+            refresh_licences: bool = False,
+            licences_only: bool = False) -> tuple[list[dict], list[dict]]:
+    """Skip denied apps, check all uncached AppIDs with one anonymous login.
 
-    Returns (job results, licence checks). Dry run still performs read-only licence
-    queries when SteamCMD is installed, but never performs an app_update.
+    The legacy single-app probe remains available for direct callers without
+    a cache, but the CLI always supplies a cache and uses the fast snapshot.
     """
-    results, checks = [], {}
+    checks = {}
+    if licence_cache is not None:
+        ids = sorted({job['steamcmd_appid'] for job in jobs}, key=int)
+        cooldown = licence_cache.cooldown()
+        uncached = []
+        for appid in ids:
+            hit = None if refresh_licences else licence_cache.get(appid)
+            if hit:
+                checks[appid] = hit
+            elif cooldown:
+                checks[appid] = {'status': 'rate_limited', 'reason': f'cooldown in effect until {cooldown}'}
+            else:
+                uncached.append(appid)
+        if uncached:
+            batch = check_anonymous_licences_bulk(steamcmd, uncached, licence_timeout_seconds)
+            for appid, outcome in batch.items():
+                checks[appid] = outcome
+                if outcome['status'] in ('denied', 'granted'):
+                    licence_cache.put(appid, outcome)
+                elif outcome['status'] == 'rate_limited':
+                    cooldown = licence_cache.rate_limited()
+                    logger.warning('SteamCMD rate limited; licence checks stopped until %s', cooldown)
+            logger.info('Anonymous licence snapshot: %d AppIDs checked using one SteamCMD session', len(uncached))
+    results = []
+    steam_state = None
     for job in jobs:
         appid = job['steamcmd_appid']
         if appid not in checks:
             checks[appid] = check_anonymous_licence(steamcmd, appid, licence_timeout_seconds)
-            check = checks[appid]
-            logger.info('LICENCE AppID %s: %s (%s)', appid, check['status'].upper(), check['reason'])
         check = checks[appid]
+        logger.info('LICENCE AppID %s: %s%s (%s)', appid, check['status'].upper(),
+                    ' [CACHE]' if check.get('cached') else '', check['reason'])
         base = {**job, 'licence_status': check['status']}
         if check['status'] != 'granted':
             reason = f'Skipped: anonymous licence {check["status"]}: {check["reason"]}'
             results.append({**base, 'status': 'skipped', 'success': None, 'message': reason})
             logger.info('%s AppID %s', reason, appid)
             continue
-        if job.get('skip_if_steam_running', False):
-            state = steam_client_running()
-            if state is not False:
-                reason = 'Steam client is running' if state is True else 'could not verify Steam client is closed'
+        if job.get('skip_if_steam_running', False) and not licences_only:
+            if steam_state is None:
+                steam_state = steam_client_running()
+            if steam_state is not False:
+                reason = 'Steam client is running' if steam_state is True else 'could not verify Steam client is closed'
                 results.append({**base, 'status': 'skipped', 'success': None,
                                 'message': f'Skipped in-place update: {reason}'})
                 logger.warning('Skipping AppID %s: %s', appid, reason)
                 continue
-        if dry_run:
+        if dry_run or licences_only:
             results.append({**base, 'status': 'dry-run', 'success': None,
                             'message': 'Licence preflight passed; no download started'})
-            logger.info('DRY RUN: would update AppID %s in %s', appid, job['install_dir'])
+            logger.info('PREVIEW: eligible AppID %s in %s; no download started', appid, job['install_dir'])
             continue
         command = [str(steamcmd), '+force_install_dir', job['install_dir'], '+login', 'anonymous',
                    '+app_update', appid]
@@ -248,7 +279,7 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
             ok, message = False, f'Could not launch SteamCMD: {exc}'
         results.append({**base, 'status': 'updated' if ok else 'failed', 'success': ok, 'message': message})
         logger.info('%s: AppID %s: %s', 'OK' if ok else 'FAILED', appid, message)
-    return results, [{'appid': appid, **status} for appid, status in sorted(checks.items())]
+    return results, [{'appid': appid, **status} for appid, status in sorted(checks.items(), key=lambda x:int(x[0]))]
 
 
 def write_summary(logdir: Path, summary: dict, stamp: str) -> Path:
