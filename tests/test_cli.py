@@ -10,6 +10,30 @@ from steam_manifest_updater.cli import main
 
 
 class CLITests(unittest.TestCase):
+    def test_licences_command_writes_report_without_crashing(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            steam = root / 'steam'
+            apps = steam / 'steamapps'
+            (apps / 'common' / 'Demo').mkdir(parents=True)
+            (apps / 'appmanifest_123.acf').write_text(
+                '"AppState" { "appid" "123" "name" "Demo" "installdir" "Demo" }')
+            config = root / 'config.json'
+            config.write_text(json.dumps({
+                'steam_roots': [str(steam)], 'log_dir': str(root / 'logs'),
+                'auto_update': {'enabled': True}, 'jobs': []
+            }))
+            with patch('steam_manifest_updater.cli.detect_steam_roots', return_value=[]):
+                status = main(['--config', str(config), 'licences'])
+            self.assertEqual(status, 0)
+            reports = [p for p in (root / 'logs').glob('*.json')
+                       if p.name != 'licence-cache.json']
+            self.assertEqual(len(reports), 1)
+            report = json.loads(reports[0].read_text())
+            self.assertTrue(report['dry_run'])
+            self.assertEqual(report['licence_checks'][0]['status'], 'unknown')
+            self.assertTrue(all(result['status'] != 'updated' for result in report['results']))
+
     def test_discovery_and_dry_run_from_fixture(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)
