@@ -44,8 +44,15 @@ def parse_snapshot(output: str, appids: list[str]) -> dict[str, dict]:
             # Missing package membership means we cannot safely conclude
             # entitlement, or non-entitlement, for other apps.
             return {aid: {'status': 'unknown', 'reason': 'active licence package lacks AppID list'} for aid in ids}
-        listing = apps.group(1).split('(')[0]
-        for aid in set(re.findall(r"\b\d+\b", listing)) & ids:
+        line = apps.group(1)
+        listing = line.split('(')[0]
+        listed_ids = set(re.findall(r"\b\d+\b", listing))
+        count = re.search(r"\((\d+)\s+in\s+total\)", line, re.IGNORECASE)
+        if count and len(listed_ids) != int(count.group(1)):
+            return {aid: {'status': 'unknown', 'reason': 'licence package AppID list is incomplete'} for aid in ids}
+        if not listed_ids:
+            return {aid: {'status': 'unknown', 'reason': 'licence package AppID list is empty'} for aid in ids}
+        for aid in listed_ids & ids:
             granted[aid] = {'status': 'granted',
                             'reason': 'anonymous licence snapshot explicitly includes this AppID',
                             'package_id': match.group(1)}
