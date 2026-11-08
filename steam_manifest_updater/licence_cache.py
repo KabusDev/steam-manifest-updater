@@ -31,11 +31,11 @@ class LicenceCache:
         self.granted_hours = granted_hours
         self.cooldown_minutes = cooldown_minutes
         self.warning = None
-        self.data = {'version': 1, 'apps': {}, 'cooldown_until': None}
+        self.data = {'version': 1, 'apps': {}, 'cooldown_until': None, 'last_probe': {}}
         if self.path.exists():
             try:
                 parsed = json.loads(self.path.read_text(encoding='utf-8'))
-                if not isinstance(parsed, dict) or parsed.get('version') != 1 or not isinstance(parsed.get('apps'), dict):
+                if not isinstance(parsed, dict) or parsed.get('version') != 1 or not isinstance(parsed.get('apps'), dict) or not isinstance(parsed.get('last_probe', {}), dict):
                     raise ValueError('unexpected cache structure')
                 self.data = parsed
             except (OSError, json.JSONDecodeError, ValueError) as exc:
@@ -74,6 +74,18 @@ class LicenceCache:
         if result.get('package_id'):
             entry['package_id'] = str(result['package_id'])
         self.data['apps'][str(appid)] = entry
+        self.save()
+
+    def last_probe_at(self, appid: str) -> datetime | None:
+        return parse_utc(self.data.get('last_probe', {}).get(str(appid)))
+
+    def probe_due(self, appid: str, retry_hours: int, now: datetime | None = None) -> bool:
+        previous = self.last_probe_at(appid)
+        return previous is None or previous + timedelta(hours=retry_hours) <= (now or utcnow())
+
+    def record_probe(self, appid: str, now: datetime | None = None) -> None:
+        # UNKNOWN is never transformed into a denial by probe history.
+        self.data.setdefault('last_probe', {})[str(appid)] = (now or utcnow()).isoformat()
         self.save()
 
     def rate_limited(self, now: datetime | None = None) -> str:

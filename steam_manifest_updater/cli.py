@@ -115,7 +115,10 @@ def main(argv=None):
                                                dry_run=only_licences or args.dry_run,
                                                licence_cache=cache,
                                                refresh_licences=(args.refresh if only_licences else args.refresh_licences),
-                                               licences_only=only_licences)
+                                               licences_only=only_licences,
+                                               fallback_enabled=config.get('licence_fallback', {}).get('enabled', True),
+                                               fallback_max_per_run=config.get('licence_fallback', {}).get('max_checks_per_run', 8),
+                                               fallback_retry_hours=config.get('licence_fallback', {}).get('retry_unknown_hours', 48))
             summary = {
                 'timestamp': datetime.now().astimezone().isoformat(),
                 'dry_run': only_licences or args.dry_run,
@@ -130,8 +133,9 @@ def main(argv=None):
             }
             report = write_summary(logdir, summary, stamp)
             logger.info('Report: %s', report)
-            logger.info('Summary: %d updated, %d skipped, %d failed',
+            logger.info('Summary: %d updated, %d already up to date, %d skipped, %d failed',
                         sum(x['status'] == 'updated' for x in results),
+                        sum(x['status'] == 'already_up_to_date' for x in results),
                         sum(x['status'] == 'skipped' for x in results),
                         sum(x['status'] == 'failed' for x in results))
         return 1 if any(result['status'] == 'failed' for result in results) else 0

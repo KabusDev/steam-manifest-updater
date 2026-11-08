@@ -16,9 +16,10 @@ from pathlib import Path
 
 from .config import ConfigError, project_path
 from .licence_cache import LicenceCache
-from .licence_snapshot import check_anonymous_licences_bulk
+from .licence_snapshot import check_anonymous_licences_bulk, RATE_LIMIT, LOGIN_FAILURE
 
 SUCCESS_PATTERN = re.compile(r"(?im)^\s*Success!\s+App\b")
+UP_TO_DATE_PATTERN = re.compile(r"(?im)^\s*Success!\s+App\b[^\r\n]*\balready up to date\.")
 ERROR_PATTERN = re.compile(r"(?im)^\s*(?:ERROR!|Error!)\s+(?:Failed|App\b)")
 LICENSE_HEADER = re.compile(r"(?im)^\s*License packageID\s+(\d+)\s*:")
 ACTIVE_STATE = re.compile(r"(?im)^\s*-?\s*State\s*:\s*Active\b")
@@ -87,6 +88,13 @@ def plan_jobs(config: dict, apps, libraries: list[Path], repo: Path):
     explicit = config.get('jobs', [])
     overridden = {job['detect_appid'] for job in explicit}
     installed = {app.appid for app in apps if app.files_present}
+    # Different AppIDs can share one Steam installation (Half-Life,
+    # Spore DLC, etc.). Never blindly apply automatic updates there.
+    shared_folders = {}
+    for app in apps:
+        if app.files_present:
+            key = os.path.normcase(str(app.install_dir.resolve())).casefold()
+            shared_folders.setdefault(key, set()).add(app.appid)
     jobs, inventory = [], []
 
     for app in sorted(apps, key=lambda item: (item.appid, str(item.install_dir))):
@@ -100,6 +108,11 @@ def plan_jobs(config: dict, apps, libraries: list[Path], repo: Path):
             entry['status'], entry['reason'] = 'skipped', 'automatic updates disabled'
         elif app.appid in excluded:
             entry['status'], entry['reason'] = 'skipped', 'AppID excluded by config'
+        elif len(shared_folders[os.path.normcase(str(app.install_dir.resolve())).casefold()]) > 1:
+            shared_ids = shared_folders[os.path.normcase(str(app.install_dir.resolve())).casefold()]
+            entry['status'], entry['reason'] = (
+                'skipped', 'installation folder shared by AppIDs ' +
+                ', '.join(sorted(shared_ids, key=int)) + '; use an isolated manual job')
         else:
             jobs.append({'mode': 'auto', 'detect_appid': app.appid, 'steamcmd_appid': app.appid,
                          'name': app.name, 'install_dir': str(app.install_dir),
@@ -130,26 +143,41 @@ def plan_jobs(config: dict, apps, libraries: list[Path], repo: Path):
 
 
 def parse_licence_result(output: str, appid: str) -> dict:
-    """Fail closed: only an explicitly ACTIVE licence package grants an update attempt.
+    """Interpret a single-app query without manufacturing denials.
 
-    Command output and app metadata are not a guarantee of depot access. Unknown is
-    deliberately distinct from denied, and both prevent download attempts.
+    SteamCMD can truncate an active package's Apps list (e.g. 32 of 737).
+    Explicit membership is a grant, but absence from an incomplete package
+    is UNKNOWN, never a cached DENIED.
     """
+    if RATE_LIMIT.search(output):
+        return {'status': 'rate_limited', 'reason': 'SteamCMD reported a rate limit'}
+    if LOGIN_FAILURE.search(output):
+        return {'status': 'unknown', 'reason': 'anonymous login failed'}
     headers = list(LICENSE_HEADER.finditer(output))
+    incomplete = []
     for index, match in enumerate(headers):
         block = output[match.end():headers[index + 1].start() if index + 1 < len(headers) else len(output)]
         if int(match.group(1)) == 0 or not ACTIVE_STATE.search(block):
             continue
         apps_match = APPS_LINE.search(block)
         if not apps_match:
-            return {'status': 'unknown', 'reason': 'licence package lacks an explicit AppID list'}
-        ids = re.findall(r'\b\d+\b', apps_match.group(1).split('(')[0])
-        if appid not in ids:
+            incomplete.append('active package ' + match.group(1) + ' lacks an AppID list')
             continue
-        return {'status': 'granted', 'reason': 'anonymous SteamCMD reported an active licence package',
-                'package_id': match.group(1)}
+        line = apps_match.group(1)
+        listed_ids = set(re.findall(r'\b\d+\b', line.split('(')[0]))
+        if appid in listed_ids:
+            return {'status': 'granted',
+                    'reason': 'anonymous SteamCMD explicitly listed the requested AppID in an active package',
+                    'package_id': match.group(1)}
+        count = re.search(r'\((\d+)\s+in\s+total\)', line, re.IGNORECASE)
+        if not count or len(listed_ids) != int(count.group(1)):
+            reported = count.group(1) if count else 'unknown'
+            incomplete.append(f'package {match.group(1)} lists {len(listed_ids)} of {reported} AppIDs')
+    if incomplete:
+        return {'status': 'unknown',
+                'reason': 'single-app licence response incomplete: ' + '; '.join(incomplete[:3])}
     if headers or re.search(r'(?i)\b(?:no (?:active )?licen[cs]es?|no subscription)\b', output):
-        return {'status': 'denied', 'reason': 'no active matching licence reported by anonymous SteamCMD'}
+        return {'status': 'denied', 'reason': 'no matching active anonymous licence in complete response'}
     return {'status': 'unknown', 'reason': 'SteamCMD did not return a recognisable licence response'}
 
 
@@ -166,9 +194,11 @@ def check_anonymous_licence(steamcmd: Path, appid: str, timeout_seconds: int = 9
     except OSError as exc:
         return {'status': 'unknown', 'reason': f'could not run SteamCMD licence probe: {exc}'}
     output = '\n'.join((result.stdout or '', result.stderr or ''))
+    if RATE_LIMIT.search(output):
+        return {'status': 'rate_limited', 'reason': 'SteamCMD reported a rate limit'}
     if result.returncode != 0:
         return {'status': 'unknown', 'reason': f'licence probe exited with code {result.returncode}'}
-    if re.search(r'(?i)(?:login failure|failed to log in|invalid password|offline mode|not logged on)', output):
+    if LOGIN_FAILURE.search(output):
         return {'status': 'unknown', 'reason': 'SteamCMD anonymous login was not successful'}
     return parse_licence_result(output, appid)
 
@@ -201,7 +231,9 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
             licence_timeout_seconds: int = 90, dry_run: bool = False,
             licence_cache: LicenceCache | None = None,
             refresh_licences: bool = False,
-            licences_only: bool = False) -> tuple[list[dict], list[dict]]:
+            licences_only: bool = False,
+            fallback_enabled: bool = True, fallback_max_per_run: int = 8,
+            fallback_retry_hours: int = 48) -> tuple[list[dict], list[dict]]:
     """Skip denied apps, check all uncached AppIDs with one anonymous login.
 
     The legacy single-app probe remains available for direct callers without
@@ -230,6 +262,37 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
                     cooldown = licence_cache.rate_limited()
                     logger.warning('SteamCMD rate limited; licence checks stopped until %s', cooldown)
             logger.info('Anonymous licence snapshot: %d AppIDs checked using one SteamCMD session', len(uncached))
+    # Only fall back when a valid anonymous login produced a truncated
+    # package list. Login failures, missing SteamCMD and rate limits stay
+    # fail-closed without starting more SteamCMD processes.
+    if licence_cache is not None and fallback_enabled and not licence_cache.cooldown():
+        unresolved = [
+            appid for appid, check in checks.items()
+            if check['status'] == 'unknown' and
+               check['reason'].startswith('incomplete anonymous licence snapshot')
+        ]
+        due = sorted(
+            (appid for appid in unresolved
+             if refresh_licences or licence_cache.probe_due(appid, fallback_retry_hours)),
+            key=lambda appid: (licence_cache.last_probe_at(appid) or
+                               datetime.min.replace(tzinfo=timezone.utc), int(appid))
+        )
+        attempted = 0
+        for appid in due[:fallback_max_per_run]:
+            licence_cache.record_probe(appid)
+            outcome = check_anonymous_licence(steamcmd, appid, licence_timeout_seconds)
+            checks[appid] = outcome
+            attempted += 1
+            if outcome['status'] in ('denied', 'granted'):
+                licence_cache.put(appid, outcome)
+            if outcome['status'] == 'rate_limited':
+                until = licence_cache.rate_limited()
+                logger.warning('SteamCMD licence fallback rate limited; stopping until %s', until)
+                break
+        if unresolved:
+            logger.info('LICENCE fallback: individually checked %d/%d incomplete-snapshot AppIDs '
+                        '(limit %d per run; retry unknown after %d hours)',
+                        attempted, len(unresolved), fallback_max_per_run, fallback_retry_hours)
     results = []
     steam_state = None
     logged_licences = set()
@@ -255,6 +318,11 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
             reason = f'Skipped: anonymous licence {check["status"]}: {check["reason"]}'
             results.append({**base, 'status': 'skipped', 'success': None, 'message': reason})
             continue
+        active_cooldown = licence_cache.cooldown() if licence_cache is not None else None
+        if active_cooldown and not (dry_run or licences_only):
+            results.append({**base, 'status': 'skipped', 'success': None,
+                            'message': f'SteamCMD rate-limit cooldown until {active_cooldown}'})
+            continue
         if job.get('skip_if_steam_running', False) and not licences_only:
             if steam_state is None:
                 steam_state = steam_client_running()
@@ -275,6 +343,7 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
             command.append('validate')
         command.append('+quit')
         logger.info('Updating %s AppID %s in %s', job.get('mode', 'manual'), appid, job['install_dir'])
+        already_current = False
         try:
             result = subprocess.run(command, capture_output=True, text=True, errors='replace',
                                     timeout=timeout_minutes * 60, check=False)
@@ -282,12 +351,20 @@ def execute(jobs: list[dict], steamcmd: Path, timeout_minutes: int, logger, *,
             if output:
                 logger.info('SteamCMD output:\n%s', output)
             ok = result.returncode == 0 and bool(SUCCESS_PATTERN.search(output)) and not ERROR_PATTERN.search(output)
-            message = 'SteamCMD confirmed success' if ok else 'SteamCMD did not confirm success (see log; depot access is not guaranteed)'
+            already_current = ok and bool(UP_TO_DATE_PATTERN.search(output))
+            message = ('SteamCMD already up to date' if already_current else
+                       'SteamCMD confirmed installation/update' if ok else
+                       'SteamCMD did not confirm success (see log; depot access is not guaranteed)')
+            if RATE_LIMIT.search(output) and licence_cache is not None:
+                until = licence_cache.rate_limited()
+                message = f'SteamCMD rate limited; cooldown until {until}'
+                ok = False
         except subprocess.TimeoutExpired:
             ok, message = False, f'Timed out after {timeout_minutes} minutes'
         except OSError as exc:
             ok, message = False, f'Could not launch SteamCMD: {exc}'
-        results.append({**base, 'status': 'updated' if ok else 'failed', 'success': ok, 'message': message})
+        status = 'already_up_to_date' if already_current and ok else 'updated' if ok else 'failed'
+        results.append({**base, 'status': status, 'success': ok, 'message': message})
         logger.info('%s: AppID %s: %s', 'OK' if ok else 'FAILED', appid, message)
     for (status, reason), count in sorted(grouped_unknowns.items()):
         logger.warning('LICENCE %s: %d AppID(s) skipped: %s (details in JSON report)',

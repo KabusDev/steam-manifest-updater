@@ -9,6 +9,7 @@ from steam_manifest_updater.discovery import InstalledApp
 from steam_manifest_updater.runner import (
     check_anonymous_licence, execute, parse_licence_result, plan_jobs, validate_target,
 )
+from steam_manifest_updater.licence_cache import LicenceCache
 
 
 class DummyLogger:
@@ -27,6 +28,83 @@ def app(root, appid='730'):
 
 
 class RunnerTests(unittest.TestCase):
+    def test_shared_install_folder_skips_auto_jobs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            a = app(root, '10')
+            b = InstalledApp('100', 'Expansion', a.library, a.install_dir,
+                             a.library / 'steamapps/appmanifest_100.acf', True)
+            jobs, _, inventory = plan_jobs({'auto_update': {'enabled': True}},
+                                           [a, b], [a.library], root)
+            self.assertEqual(jobs, [])
+            self.assertTrue(all(item['status'] == 'skipped' for item in inventory))
+            self.assertIn('shared', inventory[0]['reason'])
+            self.assertIn('100', inventory[0]['reason'])
+
+    def test_same_appid_on_two_drives_not_considered_shared(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            a = app(root, '440')
+            other = root / 'secondary'
+            folder_path = other / 'steamapps/common/Example'
+            folder_path.mkdir(parents=True)
+            b = InstalledApp('440', 'Same app', other, folder_path,
+                             other / 'steamapps/appmanifest_440.acf', True)
+            jobs, _, inventory = plan_jobs({'auto_update': {'enabled': True}},
+                                           [a, b], [a.library, other], root)
+            self.assertEqual(len(jobs), 2)
+
+    def test_granted_license_not_allowed_to_write_during_cooldown(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            cache = LicenceCache(root / 'cache.json')
+            cache.rate_limited()
+            cache.put('4000', {'status': 'granted', 'reason': 'previously confirmed'})
+            job = {'mode': 'manual', 'detect_appid': '4000', 'steamcmd_appid': '4000',
+                   'install_dir': str(root / 'game')}
+            with patch('steam_manifest_updater.runner.check_anonymous_licences_bulk') as snapshot, \
+                 patch('steam_manifest_updater.runner.subprocess.run') as cmd:
+                results, _ = execute([job], root / 'steamcmd.exe', 10, DummyLogger(),
+                                     licence_cache=cache)
+            snapshot.assert_not_called()
+            cmd.assert_not_called()
+            self.assertEqual(results[0]['status'], 'skipped')
+
+    def test_success_already_current_is_not_reported_as_updated(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            exe = root / 'steamcmd.exe'
+            exe.touch()
+            job = {'mode': 'manual', 'detect_appid': '4000', 'steamcmd_appid': '4000',
+                   'install_dir': str(root / 'server'), 'validate': False}
+            def fake_command(command, **kwargs):
+                if '+licenses_for_app' in command:
+                    return SimpleNamespace(returncode=0,
+                        stdout='License packageID 5:\n- State : Active\n- Apps : 4000\n',
+                        stderr='')
+                return SimpleNamespace(returncode=0,
+                    stdout="Success! App '4000' already up to date.\n", stderr='')
+            with patch('steam_manifest_updater.runner.subprocess.run', side_effect=fake_command):
+                results, _ = execute([job], exe, 5, DummyLogger())
+            self.assertEqual(results[0]['status'], 'already_up_to_date')
+            self.assertTrue(results[0]['success'])
+
+    def test_single_app_truncated_package_never_denied(self):
+        out = ('License packageID 17906:\n- State : Active\n'
+               '- Apps : 4000, 440, 730 (737 in total)\n')
+        self.assertEqual(parse_licence_result(out, '12345')['status'], 'unknown')
+        self.assertEqual(parse_licence_result(out, '440')['status'], 'granted')
+
+    def test_single_probe_rate_limit_detected(self):
+        with tempfile.TemporaryDirectory() as folder:
+            exe = Path(folder) / 'steamcmd.exe'
+            exe.touch()
+            with patch('steam_manifest_updater.runner.subprocess.run',
+                       return_value=SimpleNamespace(returncode=1,
+                                                    stdout='Rate Limit Exceeded', stderr='')):
+                check = check_anonymous_licence(exe, '123')
+            self.assertEqual(check['status'], 'rate_limited')
+
     def test_new_config_auto_jobs_detected_by_manifest(self):
         with tempfile.TemporaryDirectory() as folder:
             root = Path(folder)

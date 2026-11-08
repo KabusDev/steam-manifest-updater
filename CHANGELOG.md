@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.1 (preview)
+
+- Added bounded round-robin single-AppID licence fallback when anonymous package listings are truncated.
+- Persist per-AppID unknown-probe timestamps and respect rate-limit cooldowns.
+- Skip automatic updates for shared installation folders belonging to different AppIDs.
+- Report `already_up_to_date` separately from updates; add regression tests and configuration settings.
+
 ## 0.3.0 (preview)
 
 - One-session anonymous entitlement snapshot using SteamCMD `licenses_print`, replacing per-AppID logins for CLI users.

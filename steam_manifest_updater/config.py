@@ -78,6 +78,18 @@ def load_config(path: Path) -> dict:
         value = cache.get(key, default)
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
             raise ConfigError(f'licence_cache.{key} must be an integer from {minimum} to {maximum}')
+    fallback = config.get('licence_fallback', {})
+    if not isinstance(fallback, dict):
+        raise ConfigError('licence_fallback must be an object')
+    if not isinstance(fallback.get('enabled', True), bool):
+        raise ConfigError('licence_fallback.enabled must be true or false')
+    for key, minimum, maximum, default in [
+        ('max_checks_per_run', 0, 30, 8),
+        ('retry_unknown_hours', 1, 720, 48),
+    ]:
+        value = fallback.get(key, default)
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            raise ConfigError(f'licence_fallback.{key} must be an integer from {minimum} to {maximum}')
     return config
 
 

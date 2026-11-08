@@ -121,6 +121,75 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(results[0]['status'], 'skipped')
             self.assertIsNotNone(cache.get('1517290'))
 
+    def test_unknown_probe_history_persists_and_expires(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'cache.json'
+            stamp = datetime(2026, 11, 8, tzinfo=timezone.utc)
+            cache = LicenceCache(path)
+            cache.record_probe('1000', now=stamp)
+            restored = LicenceCache(path)
+            self.assertFalse(restored.probe_due('1000', 48, now=stamp + timedelta(hours=5)))
+            self.assertTrue(restored.probe_due('1000', 48, now=stamp + timedelta(hours=49)))
+            self.assertIsNone(restored.get('1000'))
+
+    def test_fallback_is_bounded_and_advances_across_runs(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            cache = LicenceCache(root / 'cache.json')
+            jobs = [
+                {'mode': 'manual', 'detect_appid': str(i), 'steamcmd_appid': str(i),
+                 'install_dir': str(root / ('game' + str(i)))}
+                for i in range(1, 7)
+            ]
+            incomplete = 'incomplete anonymous licence snapshot: package 17906: parsed 32 AppIDs, reported 737'
+            def bulk(exe, ids, timeout):
+                return {appid: {'status': 'unknown', 'reason': incomplete} for appid in ids}
+            def one(exe, appid, timeout):
+                return {'status': 'unknown', 'reason': 'single-app query inconclusive'}
+            with patch('steam_manifest_updater.runner.check_anonymous_licences_bulk', side_effect=bulk), \
+                 patch('steam_manifest_updater.runner.check_anonymous_licence', side_effect=one) as probe:
+                execute(jobs, root / 'steamcmd.exe', 5, Logger(), licence_cache=cache,
+                        dry_run=True, fallback_max_per_run=2)
+                self.assertEqual([call.args[1] for call in probe.call_args_list], ['1', '2'])
+                execute(jobs, root / 'steamcmd.exe', 5, Logger(), licence_cache=cache,
+                        dry_run=True, fallback_max_per_run=2)
+                self.assertEqual([call.args[1] for call in probe.call_args_list],
+                                 ['1', '2', '3', '4'])
+            self.assertIsNone(cache.get('1'))
+            self.assertFalse(cache.probe_due('1', 48))
+
+    def test_fallback_stops_at_rate_limit_and_starts_cooldown(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            cache = LicenceCache(root / 'cache.json')
+            jobs = [{'mode': 'manual', 'steamcmd_appid': str(i), 'detect_appid': str(i),
+                     'install_dir': str(root / str(i))} for i in range(1, 5)]
+            partial = 'incomplete anonymous licence snapshot: truncated'
+            with patch('steam_manifest_updater.runner.check_anonymous_licences_bulk',
+                       return_value={str(i): {'status': 'unknown', 'reason': partial}
+                                     for i in range(1, 5)}), \
+                 patch('steam_manifest_updater.runner.check_anonymous_licence',
+                       return_value={'status': 'rate_limited', 'reason': '429'}) as probe, \
+                 patch('steam_manifest_updater.runner.subprocess.run') as run:
+                results, _ = execute(jobs, root / 'steamcmd.exe', 5, Logger(),
+                                     licence_cache=cache, fallback_max_per_run=4)
+            probe.assert_called_once()
+            run.assert_not_called()
+            self.assertIsNotNone(cache.cooldown())
+            self.assertTrue(all(x['status'] == 'skipped' for x in results))
+
+    def test_fallback_skips_unknown_non_truncation(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            cache = LicenceCache(root / 'cache.json')
+            job = {'mode': 'manual', 'steamcmd_appid': '25',
+                   'detect_appid': '25', 'install_dir': str(root / 'game')}
+            with patch('steam_manifest_updater.runner.check_anonymous_licences_bulk',
+                       return_value={'25': {'status': 'unknown', 'reason': 'anonymous login failed'}}), \
+                 patch('steam_manifest_updater.runner.check_anonymous_licence') as probe:
+                execute([job], root / 'steamcmd.exe', 5, Logger(), licence_cache=cache)
+            probe.assert_not_called()
+
     def test_rate_limit_sets_cooldown(self):
         with tempfile.TemporaryDirectory() as folder:
             cache = LicenceCache(Path(folder) / 'cache.json')

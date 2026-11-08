@@ -15,5 +15,10 @@
     "denied_days": 7,
     "granted_hours": 0,
     "cooldown_minutes": 60
+  },
+  "licence_fallback": {
+    "enabled": true,
+    "max_checks_per_run": 8,
+    "retry_unknown_hours": 48
   }
 }

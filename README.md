@@ -131,6 +131,28 @@ The parser requires recognised active packages with explicit AppID lists. Missin
 > [!IMPORTANT]
 > **Steam must be closed for automatic in-place jobs.** The updater skips these jobs if Steam is running or the process check fails. Manual jobs must target separate folders.
 
+### Bounded fallback for incomplete SteamCMD licence listings
+
+Valve's anonymous licence output may show only a fraction of its AppIDs, for example **32 listed of 737 reported**. The updater retains explicit grants, then uses a **read-only single-AppID licence query** for a small rotating sample of unresolved games.
+
+By default, a run probes **at most 8 unresolved AppIDs** in addition to the one-session snapshot. Every attempted individual probe is recorded in `logs/licence-cache.json`, so tomorrow's run tries the next untested games rather than repeating today's unknown results. An unknown individual probe is eligible again after 48 hours, while a confirmed denial is cached for 7 days. Any detected rate limit stops the remaining fallback checks and starts the existing cooldown. `--refresh` or `--refresh-licences` ignores the per-AppID retry age but **does not bypass the maximum 8 checks per run**.
+
+You can control this using `licence_fallback` in `config.json` (existing configurations inherit these defaults):
+
+```json
+"licence_fallback": {
+  "enabled": true,
+  "max_checks_per_run": 8,
+  "retry_unknown_hours": 48
+}
+```
+
+Set `max_checks_per_run` to `0` to disable individual probes. A conclusive grant still **does not** guarantee depot access, and an incomplete single-app listing is treated as UNKNOWN rather than denied.
+
+**Shared installation folders:** Automatic updates now skip installations shared by **different** AppIDs, such as multiple Half-Life components. Such installs should be updated through the Steam desktop client; configured manual maintenance jobs targeting a separate folder remain available.
+
+**Result status:** SteamCMD's `already up to date` response is reported as `already_up_to_date`, separately from `updated`. An `updated` status means SteamCMD confirmed installation/update, not necessarily that bytes were downloaded.
+
 ## Scheduling
 
 Default: **03:00 local time, each day, while the Windows account is signed in**.

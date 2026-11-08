@@ -65,3 +65,15 @@ Use `py -3 -m steam_manifest_updater licences --refresh` if anonymous access to 
 ### A rate limit is detected
 
 The updater starts a cooldown (default 60 minutes), skips unverified applications, and avoids additional anonymous entitlement requests during that period. Avoid running many copies of this program simultaneously on the same public IP address.
+
+### Why are 233 games still UNKNOWN?
+
+A bulk package can report hundreds of Apps while SteamCMD exposes only a truncated list. A full denial would be unsafe to infer. The updater now attempts **at most eight individual read-only licence queries per run**, rotating over untested AppIDs and recording each attempt. An inconclusive query will not be retried for 48 hours by default. Check the `LICENCE fallback` line and `logs/licence-cache.json` for progress. It can take many scheduled runs to cover a large library.
+
+### Why are some games skipped due to shared installation directories?
+
+Different AppIDs sometimes install into one folder. Updating them independently with anonymous SteamCMD may conflict with the desktop client's tracking or replace shared files. Automatic mode deliberately skips them. Use Steam's built-in updater for these games; manual maintenance jobs must use a separate isolated install location.
+
+### Why does a successful update report 'already_up_to_date'?
+
+SteamCMD said the app was already current, which is a successful check rather than a file update. The run report now records `already_up_to_date` separately from `updated`.

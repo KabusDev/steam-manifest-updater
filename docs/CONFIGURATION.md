@@ -17,6 +17,10 @@
 | `licence_cache.denied_days` | `7` | Cache anonymous denials; 0 disables denial caching |
 | `licence_cache.granted_hours` | `0` | Grant-cache lifespan; default rechecks grants each run |
 | `licence_cache.cooldown_minutes` | `60` | Cooldown after a detected SteamCMD rate limit |
+| `licence_fallback.enabled` | `true` | Enable bounded individual AppID checks when a bulk listing is incomplete |
+| `licence_fallback.max_checks_per_run` | `8` | Maximum individual SteamCMD queries per run; 0 disables |
+| `licence_fallback.retry_unknown_hours` | `48` | Minimum time before re-querying an inconclusive individual AppID |
+
 
 **Backward compatibility:** If an existing `config.json` has no `auto_update.enabled`, auto mode stays **disabled**. This prevents old installs from silently beginning in-place downloads after a software upgrade. Add `"auto_update": {"enabled": true}` explicitly to opt in. All other missing auto settings use safe defaults.
 
@@ -28,7 +32,7 @@
 4. **All enabled jobs require an active anonymous licence check**, with no bypass. No positive licence result means **no download attempt**.
 5. Automatic *in-place* updates additionally require Steam to be closed. A failed process check also causes a skip.
 
-A detected manifest whose target folder is missing is inventoried but not auto-updated. Duplicate AppIDs installed in multiple Steam libraries produce separate automatic jobs, but their licence is checked only once per execution.
+A detected manifest whose target folder is missing is inventoried but not auto-updated. Duplicate AppIDs installed in multiple Steam libraries produce separate automatic jobs, but their licence is checked only once per execution. **Different AppIDs sharing the same install folder are skipped in automatic mode** to prevent conflicting in-place writes. Manual isolated jobs remain permitted.
 
 ## Manual job fields
 
@@ -86,6 +90,12 @@ To disable the automatic setup scan, launch `scripts/setup.ps1 -SkipLicenceScan`
 This check is read-only. It does not request free licences or attempt downloads to test ownership. An active package with a matching AppID is still **not proof that the target depots are downloadable**. SteamCMD's human-readable console format is not a supported stable API, so malformed, empty, truncated or unrecognised output fails closed as `unknown`.
 
 **Caution:** Auto mode writes directly to the installation folder discovered in the manifest. SteamCMD can leave Steam's desktop-client tracking inconsistent. Test on a non-critical machine before use.
+
+## Fallback rotation and status semantics
+
+When a complete AppID listing cannot be extracted from Valve's anonymous SteamCMD output, the script keeps explicitly listed grants, then issues up to eight individual `licenses_for_app` read-only queries per run. It records probe timestamps in the cache so later runs progress to untested AppIDs instead of repeatedly checking the same few. Confirmed denials are cached for seven days; inconclusive checks retain their status as `unknown`. A rate-limit error halts further probes and starts cooldown.
+
+The `--refresh` and `--refresh-licences` flags bypass retry ages and cached denials, **not** the per-run probe cap. Existing `config.json` files inherit the fallback defaults unless specified explicitly. `updated`, `already_up_to_date`, `skipped`, and `failed` are separate update result statuses. `already_up_to_date` counts as success but not a new update.
 
 ## Exit codes / reports
 
